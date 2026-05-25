@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::tab_groups;
 use crate::file_watcher::FileWatcher;
+use crate::recent_files::RecentFiles;
 
 use crate::search::SearchState;
 use crate::{
@@ -115,6 +116,7 @@ pub(crate) struct LiteWorkspace {
     pub search: SearchState,
     show_toolbar: bool,
     file_watcher: FileWatcher,
+    recent_files: RecentFiles,
 }
 
 impl LiteWorkspace {
@@ -134,6 +136,7 @@ impl LiteWorkspace {
             search,
             show_toolbar: true,
             file_watcher: FileWatcher::new(),
+            recent_files: RecentFiles::load_from_disk(),
         };
 
         let query_editor = this.search.query_editor.clone();
@@ -357,11 +360,13 @@ impl LiteWorkspace {
 
         self.tabs.push(Tab {
             editor,
-            path: Some(path),
+            path: Some(path.clone()),
             title,
             group: None,
         });
         self.active = self.tabs.len() - 1;
+        self.recent_files.add(&path);
+        self.recent_files.save_to_disk();
         self.save_session(cx);
         cx.notify();
         Ok(())
@@ -391,6 +396,8 @@ impl LiteWorkspace {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned().into())
             .unwrap_or("untitled".into());
+        self.recent_files.add(&path);
+        self.recent_files.save_to_disk();
         self.save_session(cx);
         cx.notify();
         Ok(())
@@ -733,6 +740,7 @@ impl Render for LiteWorkspace {
                 group: tab.group.clone(),
             })
             .collect();
+        let recent_list = self.recent_files.render_list(cx);
         let tab_list = tab_groups::render_tab_list(&tab_infos, cx);
 
         let side_tabs = div()
@@ -744,6 +752,7 @@ impl Render for LiteWorkspace {
             .border_r_1()
             .border_color(gpui::hsla(0.0, 0.0, 0.15, 1.0))
             .child(tab_list)
+            .children(recent_list)
             .child(
                 div()
                     .id("new-tab-btn")
