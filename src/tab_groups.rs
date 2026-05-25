@@ -9,6 +9,27 @@ pub(crate) struct TabInfo {
     pub group: Option<SharedString>,
 }
 
+#[derive(Clone)]
+pub(crate) struct DraggedTab {
+    pub index: usize,
+    pub title: SharedString,
+}
+
+impl Render for DraggedTab {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px(px(10.0))
+            .py(px(6.0))
+            .bg(gpui::hsla(0.0, 0.0, 0.2, 0.9))
+            .border_1()
+            .border_color(gpui::hsla(220.0, 0.8, 0.6, 1.0))
+            .rounded(px(4.0))
+            .text_size(px(13.0))
+            .text_color(gpui::hsla(0.0, 0.0, 0.9, 1.0))
+            .child(self.title.clone())
+    }
+}
+
 pub(crate) fn render_tab_list(
     tabs: &[TabInfo],
     cx: &mut Context<crate::workspace::LiteWorkspace>,
@@ -40,6 +61,11 @@ pub(crate) fn render_tab_list(
         let active = tab.is_active;
         let dirty = tab.is_dirty;
         let title = tab.title.clone();
+
+        let dragged = DraggedTab {
+            index: idx,
+            title: title.clone(),
+        };
 
         let mut tab_el = div()
             .id(ElementId::Name(format!("tab-{idx}").into()))
@@ -79,7 +105,10 @@ pub(crate) fn render_tab_list(
             .on_click(cx.listener(move |workspace, _, _window, cx| {
                 workspace.active = idx;
                 cx.notify();
-            }));
+            }))
+            .on_drag(dragged, |drag: &DraggedTab, _position, _window, cx| {
+                cx.new(|_| drag.clone())
+            });
 
         if active {
             tab_el = tab_el
