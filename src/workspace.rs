@@ -10,7 +10,6 @@ use language::{Buffer, LanguageRegistry};
 use serde::{Deserialize, Serialize};
 
 use crate::tab_groups;
-use crate::tab_groups::DraggedTab;
 use crate::file_watcher::FileWatcher;
 use crate::recent_files::RecentFiles;
 use crate::encoding;
@@ -114,7 +113,7 @@ impl Tab {
 }
 
 pub(crate) struct LiteWorkspace {
-    tabs: Vec<Tab>,
+    pub(crate) tabs: Vec<Tab>,
     pub active: usize,
     languages: Arc<LanguageRegistry>,
     focus_handle: FocusHandle,
@@ -863,16 +862,6 @@ impl Render for LiteWorkspace {
             .border_color(gpui::hsla(0.0, 0.0, 0.15, 1.0))
             .child(tab_list)
             .children(recent_list)
-            .on_drop(cx.listener(|this, dragged: &DraggedTab, _window, cx| {
-                let from = dragged.index;
-                let to = this.active;
-                if from != to && from < this.tabs.len() && to < this.tabs.len() {
-                    let tab = this.tabs.remove(from);
-                    this.tabs.insert(to, tab);
-                    this.active = to;
-                    cx.notify();
-                }
-            }))
             .child(
                 div()
                     .id("new-tab-btn")

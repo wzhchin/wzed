@@ -108,7 +108,23 @@ pub(crate) fn render_tab_list(
             }))
             .on_drag(dragged, |drag: &DraggedTab, _position, _window, cx| {
                 cx.new(|_| drag.clone())
-            });
+            })
+            .on_drop(cx.listener(move |this, dragged: &DraggedTab, _window, cx| {
+                let from = dragged.index;
+                let to = idx;
+                if from == to || from >= this.tabs.len() || to >= this.tabs.len() {
+                    return;
+                }
+                let active_id = this.tabs[this.active].editor.entity_id();
+                let tab = this.tabs.remove(from);
+                this.tabs.insert(to, tab);
+                this.active = this
+                    .tabs
+                    .iter()
+                    .position(|t| t.editor.entity_id() == active_id)
+                    .unwrap_or(0);
+                cx.notify();
+            }));
 
         if active {
             tab_el = tab_el
