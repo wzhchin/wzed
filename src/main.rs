@@ -43,6 +43,8 @@ actions!(
         SearchAllTabs,
         /// Save all open tabs.
         SaveAll,
+        /// Autosave timer fired.
+        AutosaveTimer,
     ]
 );
 

@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::search::SearchState;
 use crate::{
-    CloseTab, FindNext, FindPrevious, NewFile, OpenFile, ReplaceAll, ReplaceNext, SaveAll,
-    SaveFile, SearchAllTabs, ToggleFind, ToggleRegex, ToggleReplace,
+    AutosaveTimer, CloseTab, FindNext, FindPrevious, NewFile, OpenFile, ReplaceAll, ReplaceNext,
+    SaveAll, SaveFile, SearchAllTabs, ToggleFind, ToggleRegex, ToggleReplace,
 };
 
 // --- Session persistence ---
@@ -81,6 +81,13 @@ pub(crate) fn save_session_from_outside(workspace: &LiteWorkspace, cx: &App) {
     save_session(workspace, cx);
 }
 
+fn chrono_like_timestamp() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    format!("{}", now.as_secs())
+}
+
 // --- Tab and Workspace ---
 
 pub(crate) struct Tab {
@@ -125,6 +132,18 @@ impl LiteWorkspace {
             let active_editor = this.tabs[this.active].editor.clone();
             this.search.run_search(&active_editor, cx);
             cx.notify();
+        })
+        .detach();
+
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(std::time::Duration::from_secs(30)).await;
+                let Ok(()) = this.update(cx, |this, cx| {
+                    this.handle_autosave(&AutosaveTimer, cx);
+                }) else {
+                    return;
+                };
+            }
         })
         .detach();
 
@@ -426,6 +445,36 @@ impl LiteWorkspace {
         }
         self.save_session(cx);
         cx.notify();
+    }
+
+    fn handle_autosave(
+        &mut self,
+        _action: &AutosaveTimer,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshots_dir = config_dir().join("snapshots");
+        if let Err(err) = std::fs::create_dir_all(&snapshots_dir) {
+            eprintln!("failed to create snapshots dir: {err:#}");
+            return;
+        }
+
+        for (i, tab) in self.tabs.iter().enumerate() {
+            if !tab.is_dirty(cx) {
+                continue;
+            }
+
+            if let Some(path) = &tab.path {
+                let content = tab.editor.read(cx).text(cx);
+                if let Err(err) = std::fs::write(path, &content) {
+                    eprintln!("autosave failed for {}: {err:#}", path.display());
+                }
+            }
+
+            let content = tab.editor.read(cx).text(cx);
+            let timestamp = chrono_like_timestamp();
+            let snapshot_name = format!("tab-{i}-{timestamp}.txt");
+            let _ = std::fs::write(snapshots_dir.join(&snapshot_name), &content);
+        }
     }
 
     fn handle_new(
