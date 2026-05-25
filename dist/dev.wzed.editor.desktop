@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=WZed
+GenericName=Text Editor
+Comment=Lightweight text editor based on Zed's Editor
+Exec=wzed %F
+Terminal=false
+Type=Application
+Categories=Development;TextEditor;Utility;
+MimeType=text/plain;text/x-chdr;text/x-csrc;text/x-c++hdr;text/x-c++src;text/x-rust;text/x-go;text/x-python;text/x-shellscript;text/x-yaml;text/x-json;text/x-markdown;text/css;text/x-diff;text/x-typescript;text/x-tsx;
+StartupNotify=true
+StartupWMClass=wzed
+Icon=dev.wzed.editor
