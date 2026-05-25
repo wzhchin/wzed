@@ -5,7 +5,14 @@
       "Bash(rtk ls *)",
       "Bash(rtk grep *)",
       "Bash(rtk wc *)",
-      "Bash(rtk find *)"
+      "Bash(rtk find *)",
+      "Bash(grep -E '^\\(editor|multi_buffer|language|grammars|theme|settings|assets|fs|gpui|theme_settings\\)$')",
+      "Bash(grep -iE 'editor|multi_buffer|language|grammar|theme|setting|asset|^fs$|gpui')",
+      "Bash(rtk cargo *)",
+      "Bash(cargo run *)"
+    ],
+    "additionalDirectories": [
+      "/home/chin/repos/wzed-ws/zed"
     ]
   }
 }

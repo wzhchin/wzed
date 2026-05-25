@@ -1,0 +1,24 @@
+[package]
+name = "wzed"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+[dependencies]
+anyhow = "1"
+editor = { path = "../zed/crates/editor" }
+multi_buffer = { path = "../zed/crates/multi_buffer" }
+language = { path = "../zed/crates/language" }
+language_core = { path = "../zed/crates/language_core" }
+grammars = { path = "../zed/crates/grammars", features = ["load-grammars"] }
+theme = { path = "../zed/crates/theme" }
+theme_settings = { path = "../zed/crates/theme_settings" }
+settings = { path = "../zed/crates/settings" }
+assets = { path = "../zed/crates/assets" }
+text = { path = "../zed/crates/text" }
+gpui = { path = "../zed/crates/gpui" }
+gpui_linux = { path = "../zed/crates/gpui_linux" }
+fs = { path = "../zed/crates/fs" }
+clock = { path = "../zed/crates/clock" }
+util = { path = "../zed/crates/util" }
+collections = { path = "../zed/crates/collections" }
