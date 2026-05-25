@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::search::SearchState;
 use crate::{
-    CloseTab, FindNext, FindPrevious, NewFile, OpenFile, ReplaceAll, ReplaceNext, SaveFile,
-    SearchAllTabs, ToggleFind, ToggleRegex, ToggleReplace,
+    CloseTab, FindNext, FindPrevious, NewFile, OpenFile, ReplaceAll, ReplaceNext, SaveAll,
+    SaveFile, SearchAllTabs, ToggleFind, ToggleRegex, ToggleReplace,
 };
 
 // --- Session persistence ---
@@ -408,6 +408,24 @@ impl LiteWorkspace {
                 }
             }).ok();
         }).detach();
+    }
+
+    fn handle_save_all(
+        &mut self,
+        _action: &SaveAll,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for i in 0..self.tabs.len() {
+            let tab = &self.tabs[i];
+            let Some(path) = &tab.path else { continue };
+            let content = tab.editor.read(cx).text(cx);
+            if let Err(err) = std::fs::write(path, &content) {
+                eprintln!("failed to save {}: {err:#}", path.display());
+            }
+        }
+        self.save_session(cx);
+        cx.notify();
     }
 
     fn handle_new(
@@ -915,5 +933,6 @@ impl Render for LiteWorkspace {
             .on_action(cx.listener(Self::handle_replace_all))
             .on_action(cx.listener(Self::handle_toggle_regex))
             .on_action(cx.listener(Self::handle_search_all_tabs))
+            .on_action(cx.listener(Self::handle_save_all))
     }
 }

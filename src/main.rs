@@ -41,6 +41,8 @@ actions!(
         ToggleRegex,
         /// Search all open tabs.
         SearchAllTabs,
+        /// Save all open tabs.
+        SaveAll,
     ]
 );
 
@@ -77,6 +79,7 @@ fn main() {
             KeyBinding::new("escape", ToggleFind, Some("LiteWorkspace")),
             KeyBinding::new("alt-r", ToggleRegex, Some("LiteWorkspace")),
             KeyBinding::new("ctrl-shift-f", SearchAllTabs, Some("LiteWorkspace")),
+            KeyBinding::new("ctrl-shift-s", SaveAll, Some("LiteWorkspace")),
         ]);
 
         let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
