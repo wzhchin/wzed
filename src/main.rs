@@ -6,7 +6,7 @@ use editor::{Editor, EditorMode, MultiBuffer};
 use gpui::*;
 use language::{Buffer, LanguageRegistry, LoadedLanguage};
 use settings::{KeymapFile, KeybindSource, DEFAULT_KEYMAP_PATH};
-use theme::LoadThemes;
+use theme::{LoadThemes, ThemeSettingsProvider, UiDensity};
 
 fn main() {
     let file_args: Vec<PathBuf> = std::env::args()
@@ -21,6 +21,7 @@ fn main() {
     app.run(move |cx: &mut App| {
         settings::init(cx);
         theme::init(LoadThemes::JustBase, cx);
+        theme::set_theme_settings_provider(Box::new(WzedThemeSettings::new()), cx);
 
         cx.bind_keys(
             KeymapFile::load_asset_allow_partial_failure(DEFAULT_KEYMAP_PATH, cx).unwrap(),
@@ -286,43 +287,71 @@ impl Render for LiteWorkspace {
             .bg(gpui::hsla(0.0, 0.0, 0.1, 1.0))
             .border_r_1()
             .border_color(gpui::hsla(0.0, 0.0, 0.15, 1.0))
-            .children(self.tabs.iter().enumerate().map(|(index, tab)| {
-                let is_active = index == self.active;
-                let title = tab.title.clone();
-                let mut tab_el = div()
-                    .id(ElementId::Name(format!("tab-{index}").into()))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .children(self.tabs.iter().enumerate().map(|(index, tab)| {
+                        let is_active = index == self.active;
+                        let title = tab.title.clone();
+                        let mut tab_el = div()
+                            .id(ElementId::Name(format!("tab-{index}").into()))
+                            .flex()
+                            .items_center()
+                            .px(px(10.0))
+                            .py(px(6.0))
+                            .w_full()
+                            .cursor_pointer()
+                            .child(
+                                div()
+                                    .text_size(px(13.0))
+                                    .text_color(if is_active {
+                                        gpui::hsla(0.0, 0.0, 0.9, 1.0)
+                                    } else {
+                                        gpui::hsla(0.0, 0.0, 0.6, 1.0)
+                                    })
+                                    .text_ellipsis()
+                                    .child(title),
+                            )
+                            .on_click(cx.listener(move |workspace, _, _window, cx| {
+                                workspace.active = index;
+                                cx.notify();
+                            }));
+
+                        if is_active {
+                            tab_el = tab_el
+                                .bg(gpui::hsla(0.0, 0.0, 0.18, 1.0))
+                                .border_l_2()
+                                .border_color(gpui::hsla(220.0, 0.8, 0.6, 1.0));
+                        } else {
+                            tab_el = tab_el.hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.13, 1.0)));
+                        }
+                        tab_el
+                    })),
+            )
+            .child(
+                div()
+                    .id("new-tab-btn")
                     .flex()
                     .items_center()
-                    .px(px(10.0))
-                    .py(px(6.0))
+                    .justify_center()
                     .w_full()
+                    .h(px(32.0))
                     .cursor_pointer()
+                    .border_t_1()
+                    .border_color(gpui::hsla(0.0, 0.0, 0.15, 1.0))
+                    .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.15, 1.0)))
                     .child(
                         div()
-                            .text_size(px(13.0))
-                            .text_color(if is_active {
-                                gpui::hsla(0.0, 0.0, 0.9, 1.0)
-                            } else {
-                                gpui::hsla(0.0, 0.0, 0.6, 1.0)
-                            })
-                            .text_ellipsis()
-                            .child(title),
+                            .text_size(px(16.0))
+                            .text_color(gpui::hsla(0.0, 0.0, 0.6, 1.0))
+                            .child("+"),
                     )
-                    .on_click(cx.listener(move |workspace, _, _window, cx| {
-                        workspace.active = index;
-                        cx.notify();
-                    }));
-
-                if is_active {
-                    tab_el = tab_el
-                        .bg(gpui::hsla(0.0, 0.0, 0.18, 1.0))
-                        .border_l_2()
-                        .border_color(gpui::hsla(220.0, 0.8, 0.6, 1.0));
-                } else {
-                    tab_el = tab_el.hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.13, 1.0)));
-                }
-                tab_el
-            }));
+                    .on_click(cx.listener(|workspace, _, window, cx| {
+                        workspace.handle_new(&NewFile, window, cx);
+                    })),
+            );
 
         let status_bar = div()
             .flex()
@@ -377,6 +406,54 @@ impl Render for LiteWorkspace {
             .on_action(cx.listener(Self::handle_save))
             .on_action(cx.listener(Self::handle_new))
             .on_action(cx.listener(Self::handle_close_tab))
+    }
+}
+
+struct WzedThemeSettings {
+    ui_font: Font,
+    buffer_font: Font,
+}
+
+impl WzedThemeSettings {
+    fn new() -> Self {
+        Self {
+            ui_font: Font {
+                family: "Helvetica".into(),
+                weight: gpui::FontWeight::NORMAL,
+                style: gpui::FontStyle::Normal,
+                features: FontFeatures::default(),
+                fallbacks: None,
+            },
+            buffer_font: Font {
+                family: "Monospace".into(),
+                weight: gpui::FontWeight::NORMAL,
+                style: gpui::FontStyle::Normal,
+                features: FontFeatures::default(),
+                fallbacks: None,
+            },
+        }
+    }
+}
+
+impl ThemeSettingsProvider for WzedThemeSettings {
+    fn ui_font<'a>(&'a self, _cx: &'a App) -> &'a Font {
+        &self.ui_font
+    }
+
+    fn buffer_font<'a>(&'a self, _cx: &'a App) -> &'a Font {
+        &self.buffer_font
+    }
+
+    fn ui_font_size(&self, _cx: &App) -> Pixels {
+        px(14.0)
+    }
+
+    fn buffer_font_size(&self, _cx: &App) -> Pixels {
+        px(14.0)
+    }
+
+    fn ui_density(&self, _cx: &App) -> UiDensity {
+        UiDensity::Default
     }
 }
 
