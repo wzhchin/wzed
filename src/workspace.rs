@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::search::SearchState;
 use crate::{
     CloseTab, FindNext, FindPrevious, NewFile, OpenFile, ReplaceAll, ReplaceNext, SaveFile,
-    ToggleFind, ToggleRegex, ToggleReplace,
+    SearchAllTabs, ToggleFind, ToggleRegex, ToggleReplace,
 };
 
 // --- Session persistence ---
@@ -479,6 +479,29 @@ impl LiteWorkspace {
         self.search.run_search(&active_editor, cx);
         cx.notify();
     }
+
+    fn handle_search_all_tabs(
+        &mut self,
+        _action: &SearchAllTabs,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.search.search_all_tabs = !self.search.search_all_tabs;
+        if self.search.search_all_tabs {
+            if !self.search.visible {
+                self.search.visible = true;
+            }
+            let tab_info: Vec<(Entity<Editor>, SharedString)> = self
+                .tabs
+                .iter()
+                .map(|t| (t.editor.clone(), t.title.clone()))
+                .collect();
+            self.search.run_multi_tab_search(&tab_info, cx);
+        } else {
+            self.search.tab_results.clear();
+        }
+        cx.notify();
+    }
 }
 
 impl Render for LiteWorkspace {
@@ -749,7 +772,65 @@ impl Render for LiteWorkspace {
                             .children(search_bar)
                             .child(
                                 div().flex_1().overflow_hidden().child(active_tab.editor.clone()),
-                            ),
+                            )
+                            .children(self.search.search_all_tabs.then(|| {
+                                let results = &self.search.tab_results;
+                                if results.is_empty() {
+                                    return None;
+                                }
+                                Some(
+                                    div()
+                                        .id("multi-tab-results")
+                                        .flex()
+                                        .flex_col()
+                                        .w_full()
+                                        .max_h(px(200.0))
+                                        .overflow_y_scroll()
+                                        .border_t_1()
+                                        .border_color(gpui::hsla(0.0, 0.0, 0.15, 1.0))
+                                        .bg(gpui::hsla(0.0, 0.0, 0.08, 1.0))
+                                        .children(results.iter().map(|result| {
+                                            let tab_index = result.tab_index;
+                                            div()
+                                                .id(ElementId::Name(format!("search-result-{tab_index}").into()))
+                                                .flex()
+                                                .flex_col()
+                                                .px(px(10.0))
+                                                .py(px(4.0))
+                                                .cursor_pointer()
+                                                .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.15, 1.0)))
+                                                .child(
+                                                    div()
+                                                        .flex()
+                                                        .flex_row()
+                                                        .gap(px(8.0))
+                                                        .child(
+                                                            div()
+                                                                .text_size(px(12.0))
+                                                                .text_color(gpui::hsla(0.0, 0.0, 0.9, 1.0))
+                                                                .child(result.title.clone()),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_size(px(11.0))
+                                                                .text_color(gpui::hsla(0.0, 0.0, 0.5, 1.0))
+                                                                .child(format!("{} matches", result.match_count)),
+                                                        ),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_size(px(11.0))
+                                                        .text_color(gpui::hsla(0.0, 0.0, 0.4, 1.0))
+                                                        .text_ellipsis()
+                                                        .child(result.first_line.clone()),
+                                                )
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.active = tab_index;
+                                                    cx.notify();
+                                                }))
+                                        }))
+                                )
+                            }).flatten()),
                     ),
             )
             .child(status_bar)
@@ -765,5 +846,6 @@ impl Render for LiteWorkspace {
             .on_action(cx.listener(Self::handle_replace_next))
             .on_action(cx.listener(Self::handle_replace_all))
             .on_action(cx.listener(Self::handle_toggle_regex))
+            .on_action(cx.listener(Self::handle_search_all_tabs))
     }
 }

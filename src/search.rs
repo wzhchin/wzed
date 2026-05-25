@@ -4,14 +4,23 @@ use editor::{
 };
 use gpui::*;
 
+pub(crate) struct TabSearchResult {
+    pub tab_index: usize,
+    pub title: SharedString,
+    pub match_count: usize,
+    pub first_line: String,
+}
+
 pub(crate) struct SearchState {
     pub visible: bool,
     pub show_replace: bool,
     pub use_regex: bool,
+    pub search_all_tabs: bool,
     pub query_editor: Entity<Editor>,
     pub replace_editor: Entity<Editor>,
     pub matches: Vec<std::ops::Range<usize>>,
     pub current_match: Option<usize>,
+    pub tab_results: Vec<TabSearchResult>,
 }
 
 impl SearchState {
@@ -22,10 +31,12 @@ impl SearchState {
             visible: false,
             show_replace: false,
             use_regex: false,
+            search_all_tabs: false,
             query_editor,
             replace_editor,
             matches: Vec::new(),
             current_match: None,
+            tab_results: Vec::new(),
         }
     }
 
@@ -198,5 +209,51 @@ impl SearchState {
             let end = snapshot.anchor_before(MultiBufferOffset(range.end));
             editor.edit(vec![(start..end, replacement.to_owned())], cx);
         });
+    }
+
+    pub(crate) fn run_multi_tab_search(
+        &mut self,
+        tabs: &[(Entity<Editor>, SharedString)],
+        cx: &App,
+    ) {
+        let query = self.query_editor.read(cx).text(cx);
+        if query.is_empty() {
+            self.tab_results.clear();
+            return;
+        }
+
+        self.tab_results = tabs
+            .iter()
+            .enumerate()
+            .filter_map(|(i, (editor, title))| {
+                let text = editor.read(cx).text(cx);
+                let count = if self.use_regex {
+                    regex::Regex::new(&query)
+                        .map(|re| re.find_iter(&text).count())
+                        .unwrap_or(0)
+                } else {
+                    text.matches::<&str>(&query).count()
+                };
+
+                if count == 0 {
+                    return None;
+                }
+
+                let first_line = text
+                    .lines()
+                    .find(|line| line.contains(&query[..]))
+                    .unwrap_or("")
+                    .chars()
+                    .take(80)
+                    .collect();
+
+                Some(TabSearchResult {
+                    tab_index: i,
+                    title: title.clone(),
+                    match_count: count,
+                    first_line,
+                })
+            })
+            .collect();
     }
 }
