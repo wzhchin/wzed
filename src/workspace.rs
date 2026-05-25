@@ -121,6 +121,7 @@ pub(crate) struct LiteWorkspace {
     show_toolbar: bool,
     file_watcher: FileWatcher,
     recent_files: RecentFiles,
+    show_recent_menu: bool,
     diff_state: Option<diff_view::DiffState>,
 }
 
@@ -142,6 +143,7 @@ impl LiteWorkspace {
             show_toolbar: true,
             file_watcher: FileWatcher::new(),
             recent_files: RecentFiles::load_from_disk(),
+            show_recent_menu: false,
             diff_state: None,
         };
 
@@ -834,6 +836,152 @@ impl Render for LiteWorkspace {
                 .child(toolbar_btn("Compare", cx.listener(|this, _, window, cx| {
                     this.handle_compare_files(&CompareFiles, window, cx);
                 })))
+                .child(toolbar_separator())
+                .child({
+                    let is_open = self.show_recent_menu;
+                    let entries: Vec<(PathBuf, String, String)> = self
+                        .recent_files
+                        .entries
+                        .iter()
+                        .take(15)
+                        .map(|path| {
+                            let name = path
+                                .file_name()
+                                .map(|n| n.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| "?".into());
+                            let dir = path
+                                .parent()
+                                .map(|p| p.display().to_string())
+                                .unwrap_or_default();
+                            (path.clone(), name, dir)
+                        })
+                        .collect();
+
+                    div()
+                        .id(ElementId::Name("tb-recent".into()))
+                        .cursor_pointer()
+                        .px(px(8.0))
+                        .py(px(4.0))
+                        .text_size(px(12.0))
+                        .text_color(if is_open {
+                            gpui::hsla(0.0, 0.0, 0.9, 1.0)
+                        } else {
+                            gpui::hsla(0.0, 0.0, 0.7, 1.0)
+                        })
+                        .hover(|s| {
+                            s.bg(gpui::hsla(0.0, 0.0, 0.2, 1.0))
+                                .text_color(gpui::hsla(0.0, 0.0, 0.9, 1.0))
+                        })
+                        .child("Recent")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.show_recent_menu = !this.show_recent_menu;
+                            cx.notify();
+                        }))
+                        .when(is_open, |el| {
+                            el.child(
+                                deferred(
+                                    anchored()
+                                        .anchor(Anchor::TopLeft)
+                                        .snap_to_window_with_margin(px(8.))
+                                        .child(
+                                            div()
+                                                .id("recent-dropdown")
+                                                .occlude()
+                                                .flex()
+                                                .flex_col()
+                                                .w(px(280.0))
+                                                .max_h(px(400.0))
+                                                .overflow_y_scroll()
+                                                .bg(gpui::hsla(0.0, 0.0, 0.15, 1.0))
+                                                .border_1()
+                                                .border_color(
+                                                    gpui::hsla(0.0, 0.0, 0.25, 1.0),
+                                                )
+                                                .rounded(px(4.0))
+                                                .shadow_lg()
+                                                .on_mouse_down_out(cx.listener(
+                                                    |this, _, _, cx| {
+                                                        this.show_recent_menu = false;
+                                                        cx.notify();
+                                                    },
+                                                ))
+                                                .when(entries.is_empty(), |el| {
+                                                    el.child(
+                                                        div()
+                                                            .px(px(12.0))
+                                                            .py(px(8.0))
+                                                            .text_size(px(12.0))
+                                                            .text_color(gpui::hsla(
+                                                                0.0, 0.0, 0.5, 1.0,
+                                                            ))
+                                                            .child("No recent files"),
+                                                    )
+                                                })
+                                                .children(
+                                                    entries.into_iter().enumerate().map(
+                                                        |(i, (path, name, dir))| {
+                                                            div()
+                                                                .id(ElementId::Name(
+                                                                    format!("recent-menu-{i}")
+                                                                        .into(),
+                                                                ))
+                                                                .flex()
+                                                                .flex_col()
+                                                                .px(px(12.0))
+                                                                .py(px(6.0))
+                                                                .cursor_pointer()
+                                                                .hover(|s| {
+                                                                    s.bg(gpui::hsla(
+                                                                        0.0, 0.0, 0.22, 1.0,
+                                                                    ))
+                                                                })
+                                                                .child(
+                                                                    div()
+                                                                        .text_size(px(13.0))
+                                                                        .text_color(
+                                                                            gpui::hsla(
+                                                                                0.0, 0.0, 0.9,
+                                                                                1.0,
+                                                                            ),
+                                                                        )
+                                                                        .child(name),
+                                                                )
+                                                                .child(
+                                                                    div()
+                                                                        .text_size(px(10.0))
+                                                                        .text_color(
+                                                                            gpui::hsla(
+                                                                                0.0, 0.0, 0.5,
+                                                                                1.0,
+                                                                            ),
+                                                                        )
+                                                                        .text_ellipsis()
+                                                                        .child(dir),
+                                                                )
+                                                                .on_click(cx.listener(
+                                                                    move |this,
+                                                                          _,
+                                                                          window,
+                                                                          cx| {
+                                                                        this.show_recent_menu =
+                                                                            false;
+                                                                        this.open_file_path(
+                                                                            path.clone(),
+                                                                            window,
+                                                                            cx,
+                                                                        )
+                                                                        .ok();
+                                                                    },
+                                                                ))
+                                                        },
+                                                    ),
+                                                ),
+                                        ),
+                                )
+                                .priority(1),
+                            )
+                        })
+                })
         });
 
         let tab_infos: Vec<tab_groups::TabInfo> = self
@@ -848,7 +996,6 @@ impl Render for LiteWorkspace {
                 group: tab.group.clone(),
             })
             .collect();
-        let recent_list = self.recent_files.render_list(cx);
         let tab_list = tab_groups::render_tab_list(&tab_infos, cx);
 
         let side_tabs = div()
@@ -861,7 +1008,6 @@ impl Render for LiteWorkspace {
             .border_r_1()
             .border_color(gpui::hsla(0.0, 0.0, 0.15, 1.0))
             .child(tab_list)
-            .children(recent_list)
             .child(
                 div()
                     .id("new-tab-btn")
