@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui::*;
+use theme::ActiveTheme;
 use language::{LanguageRegistry, LoadedLanguage};
 use settings::{KeymapFile, DEFAULT_KEYMAP_PATH};
 use app_theme::WzedThemeSettings;
@@ -102,6 +103,14 @@ fn main() {
 
         let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
         register_languages(&languages);
+        languages.set_theme(cx.theme().clone());
+        cx.observe_global::<theme::GlobalTheme>({
+            let languages = languages.clone();
+            move |cx| {
+                languages.set_theme(cx.theme().clone());
+            }
+        })
+        .detach();
 
         cx.set_global(OpenListener::new(ipc_sender));
         if let Err(err) = listen_for_instances(cx.global::<OpenListener>().sender()) {
