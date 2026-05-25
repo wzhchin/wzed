@@ -10884,10 +10884,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assets",
+ "chardetng",
  "clock",
  "collections",
  "dirs",
  "editor",
+ "encoding_rs",
  "fs",
  "gpui",
  "gpui_linux",

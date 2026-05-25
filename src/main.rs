@@ -1,6 +1,7 @@
 mod ipc;
 mod search;
 mod app_theme;
+mod encoding;
 mod file_watcher;
 mod recent_files;
 mod tab_groups;
@@ -52,6 +53,8 @@ actions!(
         ToggleToolbar,
         /// Move current tab to a new group.
         MoveToGroup,
+        /// Reload file with a different encoding.
+        ReloadWithEncoding,
     ]
 );
 

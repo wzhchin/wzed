@@ -13,12 +13,13 @@ use crate::tab_groups;
 use crate::tab_groups::DraggedTab;
 use crate::file_watcher::FileWatcher;
 use crate::recent_files::RecentFiles;
+use crate::encoding;
 
 use crate::search::SearchState;
 use crate::{
     AutosaveTimer, CloseTab, FindNext, FindPrevious, MoveToGroup, NewFile, OpenFile, ReplaceAll,
-    ReplaceNext, SaveAll, SaveFile, SearchAllTabs, ToggleFind, ToggleRegex, ToggleReplace,
-    ToggleToolbar,
+    ReplaceNext, ReloadWithEncoding, SaveAll, SaveFile, SearchAllTabs, ToggleFind, ToggleRegex,
+    ToggleReplace, ToggleToolbar,
 };
 
 // --- Session persistence ---
@@ -102,6 +103,7 @@ pub(crate) struct Tab {
     pub path: Option<PathBuf>,
     pub title: SharedString,
     pub group: Option<SharedString>,
+    pub encoding: &'static encoding_rs::Encoding,
 }
 
 impl Tab {
@@ -279,6 +281,7 @@ impl LiteWorkspace {
             path,
             title,
             group: None,
+            encoding: encoding_rs::UTF_8,
         }
     }
 
@@ -314,6 +317,7 @@ impl LiteWorkspace {
             path,
             title,
             group: None,
+            encoding: encoding_rs::UTF_8,
         }
     }
 
@@ -332,7 +336,7 @@ impl LiteWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        let content = std::fs::read_to_string(&path)
+        let (content, detected_encoding) = encoding::read_file_with_detection(&path)
             .with_context(|| format!("failed to read file: {}", path.display()))?;
         let title: SharedString = path
             .file_name()
@@ -365,6 +369,7 @@ impl LiteWorkspace {
             path: Some(path.clone()),
             title,
             group: None,
+            encoding: detected_encoding,
         });
         self.active = self.tabs.len() - 1;
         self.recent_files.add(&path);
@@ -525,6 +530,7 @@ impl LiteWorkspace {
             path: None,
             title: "untitled".into(),
             group: None,
+            encoding: encoding_rs::UTF_8,
         });
         self.active = self.tabs.len() - 1;
         self.save_session(cx);
@@ -693,6 +699,37 @@ impl LiteWorkspace {
         tab.group = next.map(|s| SharedString::from(s));
         cx.notify();
     }
+
+    fn handle_reload_encoding(
+        &mut self,
+        _action: &ReloadWithEncoding,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let tab = &self.tabs[self.active];
+        let Some(path) = tab.path.clone() else { return };
+        let current = tab.encoding;
+        let current_idx = encoding::SUPPORTED_ENCODINGS
+            .iter()
+            .position(|e| *e == encoding::encoding_label(current))
+            .unwrap_or(0);
+        let next_idx = (current_idx + 1) % encoding::SUPPORTED_ENCODINGS.len();
+        let label = encoding::SUPPORTED_ENCODINGS[next_idx];
+        let Some(enc) = encoding::encoding_from_label(label) else { return };
+        let content = match encoding::read_file_as_encoding(&path, enc) {
+            Ok(c) => c,
+            Err(err) => {
+                eprintln!("failed to reload with encoding {label}: {err:#}");
+                return;
+            }
+        };
+        let tab = &mut self.tabs[self.active];
+        tab.encoding = enc;
+        tab.editor.update(cx, |editor, cx| {
+            editor.set_text(content.as_str(), window, cx);
+        });
+        cx.notify();
+    }
 }
 
 impl Render for LiteWorkspace {
@@ -789,6 +826,7 @@ impl Render for LiteWorkspace {
                     })),
             );
 
+        let encoding_label = encoding::encoding_label(active_tab.encoding);
         let status_bar = div()
             .flex()
             .flex_row()
@@ -808,13 +846,26 @@ impl Render for LiteWorkspace {
             )
             .child(
                 div()
-                    .text_size(px(12.0))
-                    .text_color(gpui::hsla(0.0, 0.0, 0.5, 1.0))
-                    .child(format!(
-                        "Tab {} of {}",
-                        self.active + 1,
-                        self.tabs.len()
-                    )),
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(12.0))
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(gpui::hsla(0.0, 0.0, 0.5, 1.0))
+                            .child(encoding_label),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(gpui::hsla(0.0, 0.0, 0.5, 1.0))
+                            .child(format!(
+                                "Tab {} of {}",
+                                self.active + 1,
+                                self.tabs.len()
+                            )),
+                    ),
             );
 
         let match_info = if self.search.visible {
@@ -1058,6 +1109,7 @@ impl Render for LiteWorkspace {
             .on_action(cx.listener(Self::handle_save_all))
             .on_action(cx.listener(Self::handle_toggle_toolbar))
             .on_action(cx.listener(Self::handle_move_to_group))
+            .on_action(cx.listener(Self::handle_reload_encoding))
             .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
                 for path in paths.paths() {
                     if path.is_file() {
