@@ -37,6 +37,8 @@ actions!(
         ReplaceNext,
         /// Replace all matches.
         ReplaceAll,
+        /// Toggle regex mode.
+        ToggleRegex,
     ]
 );
 
@@ -71,6 +73,7 @@ fn main() {
             KeyBinding::new("f3", FindNext, Some("LiteWorkspace")),
             KeyBinding::new("shift-f3", FindPrevious, Some("LiteWorkspace")),
             KeyBinding::new("escape", ToggleFind, Some("LiteWorkspace")),
+            KeyBinding::new("alt-r", ToggleRegex, Some("LiteWorkspace")),
         ]);
 
         let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));

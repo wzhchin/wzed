@@ -7,6 +7,7 @@ use gpui::*;
 pub(crate) struct SearchState {
     pub visible: bool,
     pub show_replace: bool,
+    pub use_regex: bool,
     pub query_editor: Entity<Editor>,
     pub replace_editor: Entity<Editor>,
     pub matches: Vec<std::ops::Range<usize>>,
@@ -20,6 +21,7 @@ impl SearchState {
         Self {
             visible: false,
             show_replace: false,
+            use_regex: false,
             query_editor,
             replace_editor,
             matches: Vec::new(),
@@ -45,17 +47,28 @@ impl SearchState {
         }
 
         let text = active_editor.read(cx).text(cx);
-        let mut matches = Vec::new();
-        let mut start = 0;
-        while let Some(idx) = text[start..].find(&query) {
-            let abs_start = start + idx;
-            let abs_end = abs_start + query.len();
-            matches.push(abs_start..abs_end);
-            start = abs_end;
-            if start >= text.len() {
-                break;
+        let matches = if self.use_regex {
+            match regex::Regex::new(&query) {
+                Ok(re) => re
+                    .find_iter(&text)
+                    .map(|m| m.start()..m.end())
+                    .collect(),
+                Err(_) => Vec::new(),
             }
-        }
+        } else {
+            let mut matches = Vec::new();
+            let mut start = 0;
+            while let Some(idx) = text[start..].find(&query) {
+                let abs_start = start + idx;
+                let abs_end = abs_start + query.len();
+                matches.push(abs_start..abs_end);
+                start = abs_end;
+                if start >= text.len() {
+                    break;
+                }
+            }
+            matches
+        };
 
         let snapshot = active_editor.read(cx).buffer().read(cx).snapshot(cx);
         let anchor_ranges: Vec<std::ops::Range<Anchor>> = matches

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::search::SearchState;
 use crate::{
     CloseTab, FindNext, FindPrevious, NewFile, OpenFile, ReplaceAll, ReplaceNext, SaveFile,
-    ToggleFind, ToggleReplace,
+    ToggleFind, ToggleRegex, ToggleReplace,
 };
 
 // --- Session persistence ---
@@ -467,6 +467,18 @@ impl LiteWorkspace {
         self.search.replace_all(&active_editor, cx);
         cx.notify();
     }
+
+    fn handle_toggle_regex(
+        &mut self,
+        _action: &ToggleRegex,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.search.use_regex = !self.search.use_regex;
+        let active_editor = self.tabs[self.active].editor.clone();
+        self.search.run_search(&active_editor, cx);
+        cx.notify();
+    }
 }
 
 impl Render for LiteWorkspace {
@@ -641,6 +653,24 @@ impl Render for LiteWorkspace {
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.handle_toggle_find(&ToggleFind, window, cx);
                         })),
+                )
+                .child(
+                    div()
+                        .id("regex-toggle-btn")
+                        .cursor_pointer()
+                        .px(px(6.0))
+                        .py(px(2.0))
+                        .text_size(px(12.0))
+                        .text_color(if self.search.use_regex {
+                            gpui::hsla(48.0 / 360.0, 1.0, 0.6, 1.0)
+                        } else {
+                            gpui::hsla(0.0, 0.0, 0.5, 1.0)
+                        })
+                        .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.2, 1.0)))
+                        .child(".*")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.handle_toggle_regex(&ToggleRegex, window, cx);
+                        })),
                 );
 
             let replace_row = self.search.show_replace.then(|| {
@@ -734,5 +764,6 @@ impl Render for LiteWorkspace {
             .on_action(cx.listener(Self::handle_toggle_replace))
             .on_action(cx.listener(Self::handle_replace_next))
             .on_action(cx.listener(Self::handle_replace_all))
+            .on_action(cx.listener(Self::handle_toggle_regex))
     }
 }
