@@ -339,6 +339,14 @@ impl LiteWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        if let Some(idx) = self.tabs.iter().position(|tab| tab.path.as_ref() == Some(&path)) {
+            self.active = idx;
+            self.recent_files.add(&path);
+            self.recent_files.save_to_disk();
+            cx.notify();
+            return Ok(());
+        }
+
         let (content, detected_encoding) = encoding::read_file_with_detection(&path)
             .with_context(|| format!("failed to read file: {}", path.display()))?;
         let title: SharedString = path
