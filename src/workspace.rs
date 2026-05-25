@@ -14,10 +14,11 @@ use crate::tab_groups::DraggedTab;
 use crate::file_watcher::FileWatcher;
 use crate::recent_files::RecentFiles;
 use crate::encoding;
+use crate::diff_view;
 
 use crate::search::SearchState;
 use crate::{
-    AutosaveTimer, CloseTab, FindNext, FindPrevious, MoveToGroup, NewFile, OpenFile, ReplaceAll,
+    AutosaveTimer, CloseTab, CompareFiles, FindNext, FindPrevious, MoveToGroup, NewFile, OpenFile, ReplaceAll,
     ReplaceNext, ReloadWithEncoding, SaveAll, SaveFile, SearchAllTabs, ToggleFind, ToggleRegex,
     ToggleReplace, ToggleToolbar,
 };
@@ -121,6 +122,7 @@ pub(crate) struct LiteWorkspace {
     show_toolbar: bool,
     file_watcher: FileWatcher,
     recent_files: RecentFiles,
+    diff_state: Option<diff_view::DiffState>,
 }
 
 impl LiteWorkspace {
@@ -141,6 +143,7 @@ impl LiteWorkspace {
             show_toolbar: true,
             file_watcher: FileWatcher::new(),
             recent_files: RecentFiles::load_from_disk(),
+            diff_state: None,
         };
 
         let query_editor = this.search.query_editor.clone();
@@ -560,6 +563,11 @@ impl LiteWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.diff_state.is_some() {
+            self.diff_state = None;
+            cx.notify();
+            return;
+        }
         if self.search.visible {
             self.search.visible = false;
             let active_editor = &self.tabs[self.active].editor;
@@ -730,6 +738,56 @@ impl LiteWorkspace {
         });
         cx.notify();
     }
+
+    fn handle_compare_files(
+        &mut self,
+        _action: &CompareFiles,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let left_text = self.tabs[self.active].editor.read(cx).text(cx).to_string();
+        let left_title = self.tabs[self.active].title.clone();
+
+        let receiver = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Compare".into()),
+        });
+
+        cx.spawn(async move |this, cx| {
+            let paths = match receiver.await {
+                Ok(Ok(Some(paths))) => paths,
+                _ => return,
+            };
+            let right_path = match paths.into_iter().next() {
+                Some(p) => p,
+                None => return,
+            };
+
+            let right_text = match std::fs::read_to_string(&right_path) {
+                Ok(t) => t,
+                Err(err) => {
+                    eprintln!("failed to read file for comparison: {err:#}");
+                    return;
+                }
+            };
+            let right_title: SharedString = right_path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned().into())
+                .unwrap_or("unknown".into());
+
+            let diff =
+                diff_view::compute_diff(&left_text, &right_text, left_title, right_title);
+
+            this.update(cx, |this, cx| {
+                this.diff_state = Some(diff);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
 }
 
 impl Render for LiteWorkspace {
@@ -764,6 +822,10 @@ impl Render for LiteWorkspace {
                 })))
                 .child(toolbar_btn("Replace", cx.listener(|this, _, window, cx| {
                     this.handle_toggle_replace(&ToggleReplace, window, cx);
+                })))
+                .child(toolbar_separator())
+                .child(toolbar_btn("Compare", cx.listener(|this, _, window, cx| {
+                    this.handle_compare_files(&CompareFiles, window, cx);
                 })))
         });
 
@@ -1028,9 +1090,20 @@ impl Render for LiteWorkspace {
                             .flex_col()
                             .flex_1()
                             .overflow_hidden()
-                            .children(search_bar)
+                            .children(if self.diff_state.is_some() { None } else { search_bar })
                             .child(
-                                div().flex_1().overflow_hidden().child(active_tab.editor.clone()),
+                                if let Some(ref diff) = self.diff_state {
+                                    diff_view::render_diff_view(
+                                        diff,
+                                        cx.listener(|this, _event, _window, cx| {
+                                            this.diff_state = None;
+                                            cx.notify();
+                                        }),
+                                    )
+                                    .into_any_element()
+                                } else {
+                                    div().flex_1().overflow_hidden().child(active_tab.editor.clone()).into_any_element()
+                                }
                             )
                             .children(self.search.search_all_tabs.then(|| {
                                 let results = &self.search.tab_results;
@@ -1110,6 +1183,7 @@ impl Render for LiteWorkspace {
             .on_action(cx.listener(Self::handle_toggle_toolbar))
             .on_action(cx.listener(Self::handle_move_to_group))
             .on_action(cx.listener(Self::handle_reload_encoding))
+            .on_action(cx.listener(Self::handle_compare_files))
             .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
                 for path in paths.paths() {
                     if path.is_file() {

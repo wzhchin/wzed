@@ -1,6 +1,7 @@
 mod ipc;
 mod search;
 mod app_theme;
+mod diff_view;
 mod encoding;
 mod file_watcher;
 mod recent_files;
@@ -55,6 +56,8 @@ actions!(
         MoveToGroup,
         /// Reload file with a different encoding.
         ReloadWithEncoding,
+        /// Compare current file with another file.
+        CompareFiles,
     ]
 );
 
@@ -93,6 +96,7 @@ fn main() {
             KeyBinding::new("ctrl-shift-f", SearchAllTabs, Some("LiteWorkspace")),
             KeyBinding::new("ctrl-shift-s", SaveAll, Some("LiteWorkspace")),
             KeyBinding::new("ctrl-g", MoveToGroup, Some("LiteWorkspace")),
+            KeyBinding::new("ctrl-alt-d", CompareFiles, Some("LiteWorkspace")),
         ]);
 
         let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
