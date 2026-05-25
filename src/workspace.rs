@@ -8,10 +8,13 @@ use gpui::prelude::FluentBuilder as _;
 use language::{Buffer, LanguageRegistry};
 use serde::{Deserialize, Serialize};
 
+use crate::tab_groups;
+
 use crate::search::SearchState;
 use crate::{
-    AutosaveTimer, CloseTab, FindNext, FindPrevious, NewFile, OpenFile, ReplaceAll, ReplaceNext,
-    SaveAll, SaveFile, SearchAllTabs, ToggleFind, ToggleRegex, ToggleReplace, ToggleToolbar,
+    AutosaveTimer, CloseTab, FindNext, FindPrevious, MoveToGroup, NewFile, OpenFile, ReplaceAll,
+    ReplaceNext, SaveAll, SaveFile, SearchAllTabs, ToggleFind, ToggleRegex, ToggleReplace,
+    ToggleToolbar,
 };
 
 // --- Session persistence ---
@@ -94,6 +97,7 @@ pub(crate) struct Tab {
     pub editor: Entity<Editor>,
     pub path: Option<PathBuf>,
     pub title: SharedString,
+    pub group: Option<SharedString>,
 }
 
 impl Tab {
@@ -104,7 +108,7 @@ impl Tab {
 
 pub(crate) struct LiteWorkspace {
     tabs: Vec<Tab>,
-    active: usize,
+    pub active: usize,
     languages: Arc<LanguageRegistry>,
     focus_handle: FocusHandle,
     pub search: SearchState,
@@ -251,6 +255,7 @@ impl LiteWorkspace {
             editor,
             path,
             title,
+            group: None,
         }
     }
 
@@ -285,6 +290,7 @@ impl LiteWorkspace {
             editor,
             path,
             title,
+            group: None,
         }
     }
 
@@ -335,6 +341,7 @@ impl LiteWorkspace {
             editor,
             path: Some(path),
             title,
+            group: None,
         });
         self.active = self.tabs.len() - 1;
         self.save_session(cx);
@@ -490,6 +497,7 @@ impl LiteWorkspace {
             editor,
             path: None,
             title: "untitled".into(),
+            group: None,
         });
         self.active = self.tabs.len() - 1;
         self.save_session(cx);
@@ -639,6 +647,25 @@ impl LiteWorkspace {
         self.show_toolbar = !self.show_toolbar;
         cx.notify();
     }
+
+    fn handle_move_to_group(
+        &mut self,
+        _action: &MoveToGroup,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let tab = &mut self.tabs[self.active];
+        let groups = [None, Some("A"), Some("B"), Some("C")];
+        let current = tab.group.as_deref();
+        let next = groups
+            .iter()
+            .find(|g| g.map(|s| s > current.unwrap_or("")) != Some(true))
+            .or_else(|| groups.first())
+            .copied()
+            .flatten();
+        tab.group = next.map(|s| SharedString::from(s));
+        cx.notify();
+    }
 }
 
 impl Render for LiteWorkspace {
@@ -676,6 +703,20 @@ impl Render for LiteWorkspace {
                 })))
         });
 
+        let tab_infos: Vec<tab_groups::TabInfo> = self
+            .tabs
+            .iter()
+            .enumerate()
+            .map(|(index, tab)| tab_groups::TabInfo {
+                index,
+                title: tab.title.clone(),
+                is_active: index == self.active,
+                is_dirty: tab.is_dirty(cx),
+                group: tab.group.clone(),
+            })
+            .collect();
+        let tab_list = tab_groups::render_tab_list(&tab_infos, cx);
+
         let side_tabs = div()
             .flex()
             .flex_col()
@@ -684,59 +725,7 @@ impl Render for LiteWorkspace {
             .bg(gpui::hsla(0.0, 0.0, 0.1, 1.0))
             .border_r_1()
             .border_color(gpui::hsla(0.0, 0.0, 0.15, 1.0))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .children(self.tabs.iter().enumerate().map(|(index, tab)| {
-                        let is_active = index == self.active;
-                        let title = tab.title.clone();
-                        let is_dirty = tab.is_dirty(cx);
-                        let mut tab_el = div()
-                            .id(ElementId::Name(format!("tab-{index}").into()))
-                            .flex()
-                            .items_center()
-                            .px(px(10.0))
-                            .py(px(6.0))
-                            .w_full()
-                            .cursor_pointer()
-                            .child(
-                                div()
-                                    .text_size(px(13.0))
-                                    .text_color(if is_active {
-                                        gpui::hsla(0.0, 0.0, 0.9, 1.0)
-                                    } else {
-                                        gpui::hsla(0.0, 0.0, 0.6, 1.0)
-                                    })
-                                    .text_ellipsis()
-                                    .child(title),
-                            )
-                            .when(is_dirty, |el| {
-                                el.child(
-                                    div()
-                                        .ml(px(4.0))
-                                        .size(px(6.0))
-                                        .rounded_full()
-                                        .bg(gpui::hsla(220.0, 0.8, 0.6, 1.0)),
-                                )
-                            })
-                            .on_click(cx.listener(move |workspace, _, _window, cx| {
-                                workspace.active = index;
-                                cx.notify();
-                            }));
-
-                        if is_active {
-                            tab_el = tab_el
-                                .bg(gpui::hsla(0.0, 0.0, 0.18, 1.0))
-                                .border_l_2()
-                                .border_color(gpui::hsla(220.0, 0.8, 0.6, 1.0));
-                        } else {
-                            tab_el = tab_el.hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.13, 1.0)));
-                        }
-                        tab_el
-                    })),
-            )
+            .child(tab_list)
             .child(
                 div()
                     .id("new-tab-btn")
@@ -1028,6 +1017,7 @@ impl Render for LiteWorkspace {
             .on_action(cx.listener(Self::handle_search_all_tabs))
             .on_action(cx.listener(Self::handle_save_all))
             .on_action(cx.listener(Self::handle_toggle_toolbar))
+            .on_action(cx.listener(Self::handle_move_to_group))
     }
 }
 

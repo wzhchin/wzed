@@ -1,6 +1,7 @@
 mod ipc;
 mod search;
 mod app_theme;
+mod tab_groups;
 mod workspace;
 
 use std::path::PathBuf;
@@ -47,6 +48,8 @@ actions!(
         AutosaveTimer,
         /// Toggle toolbar visibility.
         ToggleToolbar,
+        /// Move current tab to a new group.
+        MoveToGroup,
     ]
 );
 
@@ -84,6 +87,7 @@ fn main() {
             KeyBinding::new("alt-r", ToggleRegex, Some("LiteWorkspace")),
             KeyBinding::new("ctrl-shift-f", SearchAllTabs, Some("LiteWorkspace")),
             KeyBinding::new("ctrl-shift-s", SaveAll, Some("LiteWorkspace")),
+            KeyBinding::new("ctrl-g", MoveToGroup, Some("LiteWorkspace")),
         ]);
 
         let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
