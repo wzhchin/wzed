@@ -2,7 +2,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, bail};
-use editor::{Editor, EditorMode, MultiBuffer};
+use editor::{
+    Anchor, Editor, EditorMode, HighlightKey, MultiBuffer, MultiBufferOffset, SelectionEffects,
+    scroll::Autoscroll,
+};
 use gpui::*;
 use language::{Buffer, LanguageRegistry, LoadedLanguage};
 use serde::{Deserialize, Serialize};
@@ -276,6 +279,13 @@ fn main() {
             KeymapFile::load_asset_allow_partial_failure(DEFAULT_KEYMAP_PATH, cx).unwrap(),
         );
 
+        cx.bind_keys(vec![
+            KeyBinding::new("ctrl-f", ToggleFind, Some("LiteWorkspace")),
+            KeyBinding::new("f3", FindNext, Some("LiteWorkspace")),
+            KeyBinding::new("shift-f3", FindPrevious, Some("LiteWorkspace")),
+            KeyBinding::new("escape", ToggleFind, Some("LiteWorkspace")),
+        ]);
+
         let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
         register_languages(&languages);
 
@@ -426,22 +436,38 @@ struct LiteWorkspace {
     active: usize,
     languages: Arc<LanguageRegistry>,
     focus_handle: FocusHandle,
+    search: SearchState,
 }
 
 impl LiteWorkspace {
     fn new(
         languages: Arc<LanguageRegistry>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
+        let query_editor = cx.new(|cx| Editor::single_line(window, cx));
 
-        Self {
+        let this = Self {
             tabs: Vec::new(),
             active: 0,
             languages,
             focus_handle,
-        }
+            search: SearchState {
+                visible: false,
+                query_editor,
+                matches: Vec::new(),
+                current_match: None,
+            },
+        };
+
+        cx.observe(&this.search.query_editor, move |this, _editor, cx| {
+            let query = this.search.query_editor.read(cx).text(cx);
+            this.run_search(&query, cx);
+        })
+        .detach();
+
+        this
     }
 
     fn restore_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -705,6 +731,153 @@ impl LiteWorkspace {
         self.save_session(cx);
         cx.notify();
     }
+
+    fn handle_toggle_find(
+        &mut self,
+        _action: &ToggleFind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.search.visible {
+            self.search.visible = false;
+            self.clear_search_highlights(cx);
+            self.search.matches.clear();
+            self.search.current_match = None;
+            let active_tab = &self.tabs[self.active];
+            active_tab.editor.update(cx, |_editor, cx| cx.notify());
+        } else {
+            self.search.visible = true;
+            self.search
+                .query_editor
+                .update(cx, |editor, cx| {
+                    editor.select_all(&editor::actions::SelectAll, window, cx);
+                });
+            self.search.query_editor.focus_handle(cx).focus(window, cx);
+        }
+        cx.notify();
+    }
+
+    fn handle_find_next(
+        &mut self,
+        _action: &FindNext,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.navigate_match(1, window, cx);
+    }
+
+    fn handle_find_previous(
+        &mut self,
+        _action: &FindPrevious,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.navigate_match(-1, window, cx);
+    }
+
+    fn run_search(&mut self, query: &str, cx: &mut Context<Self>) {
+        let active_tab = &self.tabs[self.active];
+        let editor = &active_tab.editor;
+
+        editor.update(cx, |editor, cx| {
+            editor.clear_background_highlights(HighlightKey::BufferSearchHighlights, cx);
+        });
+
+        if query.is_empty() {
+            self.search.matches.clear();
+            self.search.current_match = None;
+            cx.notify();
+            return;
+        }
+
+        let text = editor.read(cx).text(cx);
+        let mut matches = Vec::new();
+        let mut start = 0;
+        while let Some(idx) = text[start..].find(query) {
+            let abs_start = start + idx;
+            let abs_end = abs_start + query.len();
+            matches.push(abs_start..abs_end);
+            start = abs_end;
+            if start >= text.len() {
+                break;
+            }
+        }
+
+        let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+        let anchor_ranges: Vec<std::ops::Range<Anchor>> = matches
+            .iter()
+            .map(|range| {
+                snapshot.anchor_before(MultiBufferOffset(range.start))
+                    ..snapshot.anchor_before(MultiBufferOffset(range.end))
+            })
+            .collect();
+
+        editor.update(cx, |editor, cx| {
+            editor.highlight_background(
+                HighlightKey::BufferSearchHighlights,
+                &anchor_ranges,
+                |_index, _theme| gpui::hsla(48.0 / 360.0, 1.0, 0.5, 0.4),
+                cx,
+            );
+        });
+
+        self.search.current_match = if matches.is_empty() {
+            None
+        } else {
+            Some(0)
+        };
+        self.search.matches = matches;
+        cx.notify();
+    }
+
+    fn clear_search_highlights(&self, cx: &mut Context<Self>) {
+        let active_tab = &self.tabs[self.active];
+        active_tab.editor.update(cx, |editor, cx| {
+            editor.clear_background_highlights(HighlightKey::BufferSearchHighlights, cx);
+        });
+    }
+
+    fn navigate_match(
+        &mut self,
+        direction: isize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let match_count = self.search.matches.len();
+        if match_count == 0 {
+            return;
+        }
+
+        let current = self.search.current_match.unwrap_or(0);
+        let new_index = if direction > 0 {
+            (current + direction as usize) % match_count
+        } else {
+            (current + match_count - (-direction as usize) % match_count) % match_count
+        };
+        self.search.current_match = Some(new_index);
+
+        let range = self.search.matches[new_index].clone();
+        let active_tab = &self.tabs[self.active];
+        let snapshot = active_tab
+            .editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .snapshot(cx);
+        let start_anchor = snapshot.anchor_before(MultiBufferOffset(range.start));
+        let end_anchor = snapshot.anchor_before(MultiBufferOffset(range.end));
+
+        active_tab.editor.update(cx, |editor, cx| {
+            editor.change_selections(
+                SelectionEffects::scroll(Autoscroll::fit()),
+                window,
+                cx,
+                |s| s.select_ranges(vec![start_anchor..end_anchor]),
+            );
+        });
+
+        cx.notify();
+    }
 }
 
 impl Render for LiteWorkspace {
@@ -813,6 +986,78 @@ impl Render for LiteWorkspace {
                     )),
             );
 
+        let match_info = if self.search.visible {
+            let total = self.search.matches.len();
+            let current = self.search.current_match.map(|i| i + 1).unwrap_or(0);
+            format!("{current}/{total}")
+        } else {
+            String::new()
+        };
+
+        let search_bar = self.search.visible.then(|| {
+            div()
+                .id("search-bar")
+                .flex()
+                .flex_row()
+                .items_center()
+                .w_full()
+                .h(px(36.0))
+                .px(px(8.0))
+                .gap(px(6.0))
+                .bg(gpui::hsla(0.0, 0.0, 0.13, 1.0))
+                .border_b_1()
+                .border_color(gpui::hsla(0.0, 0.0, 0.15, 1.0))
+                .child(self.search.query_editor.clone())
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(gpui::hsla(0.0, 0.0, 0.6, 1.0))
+                        .child(match_info),
+                )
+                .child(
+                    div()
+                        .id("find-prev-btn")
+                        .cursor_pointer()
+                        .px(px(6.0))
+                        .py(px(2.0))
+                        .text_size(px(14.0))
+                        .text_color(gpui::hsla(0.0, 0.0, 0.7, 1.0))
+                        .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.2, 1.0)))
+                        .child("^")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.handle_find_previous(&FindPrevious, window, cx);
+                        })),
+                )
+                .child(
+                    div()
+                        .id("find-next-btn")
+                        .cursor_pointer()
+                        .px(px(6.0))
+                        .py(px(2.0))
+                        .text_size(px(14.0))
+                        .text_color(gpui::hsla(0.0, 0.0, 0.7, 1.0))
+                        .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.2, 1.0)))
+                        .child("v")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.handle_find_next(&FindNext, window, cx);
+                        })),
+                )
+                .child(
+                    div()
+                        .id("find-close-btn")
+                        .cursor_pointer()
+                        .px(px(6.0))
+                        .py(px(2.0))
+                        .text_size(px(14.0))
+                        .text_color(gpui::hsla(0.0, 0.0, 0.5, 1.0))
+                        .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.2, 1.0)))
+                        .child("x")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.handle_toggle_find(&ToggleFind, window, cx);
+                        })),
+                )
+        });
+
         div()
             .flex()
             .flex_col()
@@ -827,9 +1072,14 @@ impl Render for LiteWorkspace {
                     .child(side_tabs)
                     .child(
                         div()
+                            .flex()
+                            .flex_col()
                             .flex_1()
                             .overflow_hidden()
-                            .child(active_tab.editor.clone()),
+                            .children(search_bar)
+                            .child(
+                                div().flex_1().overflow_hidden().child(active_tab.editor.clone()),
+                            ),
                     ),
             )
             .child(status_bar)
@@ -838,6 +1088,9 @@ impl Render for LiteWorkspace {
             .on_action(cx.listener(Self::handle_save))
             .on_action(cx.listener(Self::handle_new))
             .on_action(cx.listener(Self::handle_close_tab))
+            .on_action(cx.listener(Self::handle_toggle_find))
+            .on_action(cx.listener(Self::handle_find_next))
+            .on_action(cx.listener(Self::handle_find_previous))
     }
 }
 
@@ -900,5 +1153,18 @@ actions!(
         NewFile,
         /// Close the current tab.
         CloseTab,
+        /// Toggle the find bar.
+        ToggleFind,
+        /// Go to next search match.
+        FindNext,
+        /// Go to previous search match.
+        FindPrevious,
     ]
 );
+
+struct SearchState {
+    visible: bool,
+    query_editor: Entity<Editor>,
+    matches: Vec<std::ops::Range<usize>>,
+    current_match: Option<usize>,
+}
