@@ -97,6 +97,7 @@ fn main() {
             KeyBinding::new("ctrl-shift-s", SaveAll, Some("LiteWorkspace")),
             KeyBinding::new("ctrl-g", MoveToGroup, Some("LiteWorkspace")),
             KeyBinding::new("ctrl-alt-d", CompareFiles, Some("LiteWorkspace")),
+            KeyBinding::new("ctrl-shift-e", ReloadWithEncoding, Some("LiteWorkspace")),
         ]);
 
         let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
