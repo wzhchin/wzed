@@ -32,10 +32,13 @@ impl Render for DraggedTab {
 
 pub(crate) fn render_tab_list(
     tabs: &[TabInfo],
+    scroll_handle: &ScrollHandle,
     cx: &mut Context<crate::workspace::LiteWorkspace>,
 ) -> impl IntoElement {
     let mut children: Vec<AnyElement> = Vec::new();
     let mut last_group: Option<&SharedString> = None;
+    let mut active_child_index = 0usize;
+    let mut child_index = 0usize;
 
     for tab in tabs {
         if let Some(ref group) = tab.group {
@@ -51,10 +54,15 @@ pub(crate) fn render_tab_list(
                         .child(group.clone())
                         .into_any_element(),
                 );
+                child_index += 1;
                 last_group = Some(group);
             }
         } else {
             last_group = None;
+        }
+
+        if tab.is_active {
+            active_child_index = child_index;
         }
 
         let idx = tab.index;
@@ -136,10 +144,13 @@ pub(crate) fn render_tab_list(
         }
 
         children.push(tab_el.into_any_element());
+        child_index += 1;
     }
 
+    scroll_handle.scroll_to_item(active_child_index);
     div()
         .id("tab-list")
+        .track_scroll(scroll_handle)
         .flex()
         .flex_col()
         .flex_1()

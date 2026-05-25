@@ -122,6 +122,7 @@ pub(crate) struct LiteWorkspace {
     file_watcher: FileWatcher,
     recent_files: RecentFiles,
     show_recent_menu: bool,
+    tab_scroll_handle: ScrollHandle,
     diff_state: Option<diff_view::DiffState>,
 }
 
@@ -144,6 +145,7 @@ impl LiteWorkspace {
             file_watcher: FileWatcher::new(),
             recent_files: RecentFiles::load_from_disk(),
             show_recent_menu: false,
+            tab_scroll_handle: ScrollHandle::new(),
             diff_state: None,
         };
 
@@ -996,7 +998,7 @@ impl Render for LiteWorkspace {
                 group: tab.group.clone(),
             })
             .collect();
-        let tab_list = tab_groups::render_tab_list(&tab_infos, cx);
+        let tab_list = tab_groups::render_tab_list(&tab_infos, &self.tab_scroll_handle, cx);
 
         let side_tabs = div()
             .id("side-tabs")
