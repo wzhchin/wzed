@@ -584,8 +584,8 @@ impl Render for LiteWorkspace {
         };
 
         let search_bar = self.search.visible.then(|| {
-            div()
-                .id("search-bar")
+            let find_row = div()
+                .id("find-row")
                 .flex()
                 .flex_row()
                 .items_center()
@@ -593,9 +593,6 @@ impl Render for LiteWorkspace {
                 .h(px(36.0))
                 .px(px(8.0))
                 .gap(px(6.0))
-                .bg(gpui::hsla(0.0, 0.0, 0.13, 1.0))
-                .border_b_1()
-                .border_color(gpui::hsla(0.0, 0.0, 0.15, 1.0))
                 .child(self.search.query_editor.clone())
                 .child(
                     div()
@@ -644,7 +641,61 @@ impl Render for LiteWorkspace {
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.handle_toggle_find(&ToggleFind, window, cx);
                         })),
-                )
+                );
+
+            let replace_row = self.search.show_replace.then(|| {
+                div()
+                    .id("replace-row")
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .w_full()
+                    .h(px(36.0))
+                    .px(px(8.0))
+                    .gap(px(6.0))
+                    .border_t_1()
+                    .border_color(gpui::hsla(0.0, 0.0, 0.12, 1.0))
+                    .child(self.search.replace_editor.clone())
+                    .child(
+                        div()
+                            .id("replace-btn")
+                            .cursor_pointer()
+                            .px(px(6.0))
+                            .py(px(2.0))
+                            .text_size(px(12.0))
+                            .text_color(gpui::hsla(0.0, 0.0, 0.7, 1.0))
+                            .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.2, 1.0)))
+                            .child("Replace")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.handle_replace_next(&ReplaceNext, window, cx);
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id("replace-all-btn")
+                            .cursor_pointer()
+                            .px(px(6.0))
+                            .py(px(2.0))
+                            .text_size(px(12.0))
+                            .text_color(gpui::hsla(0.0, 0.0, 0.7, 1.0))
+                            .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.2, 1.0)))
+                            .child("All")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.handle_replace_all(&ReplaceAll, window, cx);
+                            })),
+                    )
+            });
+
+            div()
+                .id("search-bar")
+                .flex()
+                .flex_col()
+                .w_full()
+                .bg(gpui::hsla(0.0, 0.0, 0.13, 1.0))
+                .border_b_1()
+                .border_color(gpui::hsla(0.0, 0.0, 0.15, 1.0))
+                .child(find_row)
+                .children(replace_row)
         });
 
         div()
