@@ -122,5 +122,11 @@ pub(crate) fn render_tab_list(
         children.push(tab_el.into_any_element());
     }
 
-    div().flex().flex_col().flex_1().children(children)
+    div()
+        .id("tab-list")
+        .flex()
+        .flex_col()
+        .flex_1()
+        .overflow_y_scroll()
+        .children(children)
 }
