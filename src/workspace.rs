@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::search::SearchState;
 use crate::{
     AutosaveTimer, CloseTab, FindNext, FindPrevious, NewFile, OpenFile, ReplaceAll, ReplaceNext,
-    SaveAll, SaveFile, SearchAllTabs, ToggleFind, ToggleRegex, ToggleReplace,
+    SaveAll, SaveFile, SearchAllTabs, ToggleFind, ToggleRegex, ToggleReplace, ToggleToolbar,
 };
 
 // --- Session persistence ---
@@ -108,6 +108,7 @@ pub(crate) struct LiteWorkspace {
     languages: Arc<LanguageRegistry>,
     focus_handle: FocusHandle,
     pub search: SearchState,
+    show_toolbar: bool,
 }
 
 impl LiteWorkspace {
@@ -125,6 +126,7 @@ impl LiteWorkspace {
             languages,
             focus_handle,
             search,
+            show_toolbar: true,
         };
 
         let query_editor = this.search.query_editor.clone();
@@ -627,11 +629,52 @@ impl LiteWorkspace {
         }
         cx.notify();
     }
+
+    fn handle_toggle_toolbar(
+        &mut self,
+        _action: &ToggleToolbar,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_toolbar = !self.show_toolbar;
+        cx.notify();
+    }
 }
 
 impl Render for LiteWorkspace {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_tab = &self.tabs[self.active];
+
+        let toolbar = self.show_toolbar.then(|| {
+            div()
+                .id("toolbar")
+                .flex()
+                .flex_row()
+                .items_center()
+                .w_full()
+                .h(px(32.0))
+                .px(px(8.0))
+                .gap(px(2.0))
+                .bg(gpui::hsla(0.0, 0.0, 0.12, 1.0))
+                .border_b_1()
+                .border_color(gpui::hsla(0.0, 0.0, 0.15, 1.0))
+                .child(toolbar_btn("New", cx.listener(|this, _, window, cx| {
+                    this.handle_new(&NewFile, window, cx);
+                })))
+                .child(toolbar_btn("Open", cx.listener(|this, _, window, cx| {
+                    this.handle_open(&OpenFile, window, cx);
+                })))
+                .child(toolbar_btn("Save", cx.listener(|this, _, window, cx| {
+                    this.handle_save(&SaveFile, window, cx);
+                })))
+                .child(toolbar_separator())
+                .child(toolbar_btn("Find", cx.listener(|this, _, window, cx| {
+                    this.handle_toggle_find(&ToggleFind, window, cx);
+                })))
+                .child(toolbar_btn("Replace", cx.listener(|this, _, window, cx| {
+                    this.handle_toggle_replace(&ToggleReplace, window, cx);
+                })))
+        });
 
         let side_tabs = div()
             .flex()
@@ -891,6 +934,7 @@ impl Render for LiteWorkspace {
             .flex_col()
             .size_full()
             .bg(gpui::hsla(0.0, 0.0, 0.1, 1.0))
+            .children(toolbar)
             .child(
                 div()
                     .flex()
@@ -983,5 +1027,30 @@ impl Render for LiteWorkspace {
             .on_action(cx.listener(Self::handle_toggle_regex))
             .on_action(cx.listener(Self::handle_search_all_tabs))
             .on_action(cx.listener(Self::handle_save_all))
+            .on_action(cx.listener(Self::handle_toggle_toolbar))
     }
+}
+
+fn toolbar_btn(
+    label: &'static str,
+    handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    div()
+        .id(ElementId::Name(format!("tb-{label}").into()))
+        .cursor_pointer()
+        .px(px(8.0))
+        .py(px(4.0))
+        .text_size(px(12.0))
+        .text_color(gpui::hsla(0.0, 0.0, 0.7, 1.0))
+        .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.2, 1.0)).text_color(gpui::hsla(0.0, 0.0, 0.9, 1.0)))
+        .child(label)
+        .on_click(handler)
+}
+
+fn toolbar_separator() -> Div {
+    div()
+        .w(px(1.0))
+        .h(px(16.0))
+        .mx(px(4.0))
+        .bg(gpui::hsla(0.0, 0.0, 0.2, 1.0))
 }

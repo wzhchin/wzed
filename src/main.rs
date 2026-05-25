@@ -45,6 +45,8 @@ actions!(
         SaveAll,
         /// Autosave timer fired.
         AutosaveTimer,
+        /// Toggle toolbar visibility.
+        ToggleToolbar,
     ]
 );
 
