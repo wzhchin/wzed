@@ -3,7 +3,8 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, Result, bail};
 use editor::{Editor, EditorMode, MultiBuffer};
-use gpui::*;
+use gpui::{self, *};
+use gpui::prelude::FluentBuilder as _;
 use language::{Buffer, LanguageRegistry};
 use serde::{Deserialize, Serialize};
 
@@ -86,6 +87,12 @@ pub(crate) struct Tab {
     pub editor: Entity<Editor>,
     pub path: Option<PathBuf>,
     pub title: SharedString,
+}
+
+impl Tab {
+    fn is_dirty(&self, cx: &App) -> bool {
+        self.editor.read(cx).buffer().read(cx).is_dirty(cx)
+    }
 }
 
 pub(crate) struct LiteWorkspace {
@@ -524,6 +531,7 @@ impl Render for LiteWorkspace {
                     .children(self.tabs.iter().enumerate().map(|(index, tab)| {
                         let is_active = index == self.active;
                         let title = tab.title.clone();
+                        let is_dirty = tab.is_dirty(cx);
                         let mut tab_el = div()
                             .id(ElementId::Name(format!("tab-{index}").into()))
                             .flex()
@@ -543,6 +551,15 @@ impl Render for LiteWorkspace {
                                     .text_ellipsis()
                                     .child(title),
                             )
+                            .when(is_dirty, |el| {
+                                el.child(
+                                    div()
+                                        .ml(px(4.0))
+                                        .size(px(6.0))
+                                        .rounded_full()
+                                        .bg(gpui::hsla(220.0, 0.8, 0.6, 1.0)),
+                                )
+                            })
                             .on_click(cx.listener(move |workspace, _, _window, cx| {
                                 workspace.active = index;
                                 cx.notify();
