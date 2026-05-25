@@ -1,6 +1,7 @@
 mod ipc;
 mod search;
 mod app_theme;
+mod file_watcher;
 mod tab_groups;
 mod workspace;
 

@@ -9,6 +9,7 @@ use language::{Buffer, LanguageRegistry};
 use serde::{Deserialize, Serialize};
 
 use crate::tab_groups;
+use crate::file_watcher::FileWatcher;
 
 use crate::search::SearchState;
 use crate::{
@@ -113,6 +114,7 @@ pub(crate) struct LiteWorkspace {
     focus_handle: FocusHandle,
     pub search: SearchState,
     show_toolbar: bool,
+    file_watcher: FileWatcher,
 }
 
 impl LiteWorkspace {
@@ -131,6 +133,7 @@ impl LiteWorkspace {
             focus_handle,
             search,
             show_toolbar: true,
+            file_watcher: FileWatcher::new(),
         };
 
         let query_editor = this.search.query_editor.clone();
@@ -146,6 +149,21 @@ impl LiteWorkspace {
                 cx.background_executor().timer(std::time::Duration::from_secs(30)).await;
                 let Ok(()) = this.update(cx, |this, cx| {
                     this.handle_autosave(&AutosaveTimer, cx);
+                }) else {
+                    return;
+                };
+            }
+        })
+        .detach();
+
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(std::time::Duration::from_secs(5)).await;
+                let Ok(()) = this.update_in(cx, |this, window, cx| {
+                    let changed = this.file_watcher.check_for_changes(&mut this.tabs, cx);
+                    for idx in changed {
+                        FileWatcher::reload_tab(&mut this.tabs[idx], window, cx);
+                    }
                 }) else {
                     return;
                 };
