@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, bail};
@@ -325,13 +325,28 @@ impl LiteWorkspace {
         let tab = &self.tabs[self.active];
         let path = match &tab.path {
             Some(p) => p.clone(),
-            None => bail!("no file path for this tab, save-as not yet implemented"),
+            None => bail!("no file path for this tab"),
         };
 
         let content = tab.editor.read(cx).text(cx);
         std::fs::write(&path, &content)
             .with_context(|| format!("failed to write file: {}", path.display()))?;
         self.save_session(cx);
+        Ok(())
+    }
+
+    fn save_active_tab_as(&mut self, path: PathBuf, cx: &mut Context<Self>) -> Result<()> {
+        let tab = &mut self.tabs[self.active];
+        let content = tab.editor.read(cx).text(cx);
+        std::fs::write(&path, &content)
+            .with_context(|| format!("failed to write file: {}", path.display()))?;
+        tab.path = Some(path.clone());
+        tab.title = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned().into())
+            .unwrap_or("untitled".into());
+        self.save_session(cx);
+        cx.notify();
         Ok(())
     }
 
@@ -343,9 +358,25 @@ impl LiteWorkspace {
         &mut self,
         _action: &OpenFile,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
-        eprintln!("open file: file dialog not yet implemented, pass files as CLI args");
+        let receiver = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: Some("Open".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let result = match receiver.await {
+                Ok(Ok(Some(paths))) => paths,
+                _ => return,
+            };
+            this.update_in(cx, |this, window, cx| {
+                for path in result {
+                    this.open_file_path(path, window, cx).ok();
+                }
+            }).ok();
+        }).detach();
     }
 
     fn handle_save(
@@ -354,9 +385,29 @@ impl LiteWorkspace {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Err(err) = self.save_active_tab(cx) {
-            eprintln!("failed to save: {err:#}");
+        let tab = &self.tabs[self.active];
+        if tab.path.is_some() {
+            if let Err(err) = self.save_active_tab(cx) {
+                eprintln!("failed to save: {err:#}");
+            }
+            return;
         }
+
+        let receiver = cx.prompt_for_new_path(
+            Path::new("."),
+            Some("untitled"),
+        );
+        cx.spawn(async move |this, cx| {
+            let path = match receiver.await {
+                Ok(Ok(Some(path))) => path,
+                _ => return,
+            };
+            this.update(cx, |this, cx| {
+                if let Err(err) = this.save_active_tab_as(path, cx) {
+                    eprintln!("failed to save as: {err:#}");
+                }
+            }).ok();
+        }).detach();
     }
 
     fn handle_new(
