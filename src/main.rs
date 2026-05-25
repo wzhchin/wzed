@@ -59,6 +59,8 @@ actions!(
         ReloadWithEncoding,
         /// Compare current file with another file.
         CompareFiles,
+        /// Toggle the command center.
+        ToggleCommandCenter,
     ]
 );
 
@@ -99,6 +101,7 @@ fn main() {
             KeyBinding::new("ctrl-g", MoveToGroup, Some("LiteWorkspace")),
             KeyBinding::new("ctrl-alt-d", CompareFiles, Some("LiteWorkspace")),
             KeyBinding::new("ctrl-shift-e", ReloadWithEncoding, Some("LiteWorkspace")),
+            KeyBinding::new("alt-x", ToggleCommandCenter, Some("LiteWorkspace")),
         ]);
 
         let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));

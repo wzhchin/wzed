@@ -1,0 +1,13 @@
+- [x] 左侧 tabs 不能滚动
+- [x] 最近打开列表，应该在 menu 中，通过 files-> recent-files 显示一个 dropdown menu
+- [x] 拖拽工作不正常
+- [x] tabs 应该去重，每个文件只能出现一次，如果已经打开过，转跳到它
+- [x] 无法切换编码, 如何切换？ — Ctrl+Shift+E
+- [x] 没有语法高亮，任何代码高亮都没有
+- [x] 当打开某个项目时，应该 scroll-into-view
+- [x] 添加 command-center, 使用 m-x 呼出，放在 window center
+- command-center: open file
+- cmd-center: switch buffer -> sub menu
+- cmd-center: change encoding
+- cmd-center: change file type(json/java)
+- 仍然没有代码高亮，语法文件应该是加载了

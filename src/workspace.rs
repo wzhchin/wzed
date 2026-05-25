@@ -18,8 +18,8 @@ use crate::diff_view;
 use crate::search::SearchState;
 use crate::{
     AutosaveTimer, CloseTab, CompareFiles, FindNext, FindPrevious, MoveToGroup, NewFile, OpenFile, ReplaceAll,
-    ReplaceNext, ReloadWithEncoding, SaveAll, SaveFile, SearchAllTabs, ToggleFind, ToggleRegex,
-    ToggleReplace, ToggleToolbar,
+    ReplaceNext, ReloadWithEncoding, SaveAll, SaveFile, SearchAllTabs, ToggleCommandCenter, ToggleFind,
+    ToggleRegex, ToggleReplace, ToggleToolbar,
 };
 
 // --- Session persistence ---
@@ -123,6 +123,9 @@ pub(crate) struct LiteWorkspace {
     recent_files: RecentFiles,
     show_recent_menu: bool,
     tab_scroll_handle: ScrollHandle,
+    show_command_center: bool,
+    command_center_query: String,
+    command_center_selected: usize,
     diff_state: Option<diff_view::DiffState>,
 }
 
@@ -146,6 +149,9 @@ impl LiteWorkspace {
             recent_files: RecentFiles::load_from_disk(),
             show_recent_menu: false,
             tab_scroll_handle: ScrollHandle::new(),
+            show_command_center: false,
+            command_center_query: String::new(),
+            command_center_selected: 0,
             diff_state: None,
         };
 
@@ -700,6 +706,43 @@ impl LiteWorkspace {
         cx.notify();
     }
 
+    fn handle_toggle_command_center(
+        &mut self,
+        _action: &ToggleCommandCenter,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_command_center = !self.show_command_center;
+        self.command_center_query.clear();
+        self.command_center_selected = 0;
+        cx.notify();
+    }
+
+    fn execute_command(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_command_center = false;
+        self.command_center_query.clear();
+        match name {
+            "New File" => self.handle_new(&NewFile, window, cx),
+            "Open File" => self.handle_open(&OpenFile, window, cx),
+            "Save File" => self.handle_save(&SaveFile, window, cx),
+            "Save All" => self.handle_save_all(&SaveAll, window, cx),
+            "Close Tab" => self.handle_close_tab(&CloseTab, window, cx),
+            "Find" => self.handle_toggle_find(&ToggleFind, window, cx),
+            "Find Next" => self.handle_find_next(&FindNext, window, cx),
+            "Find Previous" => self.handle_find_previous(&FindPrevious, window, cx),
+            "Replace" => self.handle_toggle_replace(&ToggleReplace, window, cx),
+            "Replace Next" => self.handle_replace_next(&ReplaceNext, window, cx),
+            "Replace All" => self.handle_replace_all(&ReplaceAll, window, cx),
+            "Toggle Regex" => self.handle_toggle_regex(&ToggleRegex, window, cx),
+            "Search All Tabs" => self.handle_search_all_tabs(&SearchAllTabs, window, cx),
+            "Toggle Toolbar" => self.handle_toggle_toolbar(&ToggleToolbar, window, cx),
+            "Move to Group" => self.handle_move_to_group(&MoveToGroup, window, cx),
+            "Switch Encoding" => self.handle_reload_encoding(&ReloadWithEncoding, window, cx),
+            "Compare Files" => self.handle_compare_files(&CompareFiles, window, cx),
+            _ => {}
+        }
+    }
+
     fn handle_move_to_group(
         &mut self,
         _action: &MoveToGroup,
@@ -1217,6 +1260,7 @@ impl Render for LiteWorkspace {
         });
 
         div()
+            .relative()
             .flex()
             .flex_col()
             .size_full()
@@ -1329,6 +1373,147 @@ impl Render for LiteWorkspace {
             .on_action(cx.listener(Self::handle_move_to_group))
             .on_action(cx.listener(Self::handle_reload_encoding))
             .on_action(cx.listener(Self::handle_compare_files))
+            .on_action(cx.listener(Self::handle_toggle_command_center))
+            .when(self.show_command_center, |el| {
+                let commands = [
+                    "New File",
+                    "Open File",
+                    "Save File",
+                    "Save All",
+                    "Close Tab",
+                    "Find",
+                    "Find Next",
+                    "Find Previous",
+                    "Replace",
+                    "Replace Next",
+                    "Replace All",
+                    "Toggle Regex",
+                    "Search All Tabs",
+                    "Toggle Toolbar",
+                    "Move to Group",
+                    "Switch Encoding",
+                    "Compare Files",
+                ];
+                let filtered: Vec<(usize, &str)> = commands
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, cmd)| {
+                        if self.command_center_query.is_empty() {
+                            true
+                        } else {
+                            cmd.to_lowercase()
+                                .contains(&self.command_center_query.to_lowercase())
+                        }
+                    })
+                    .map(|(i, s)| (i, *s))
+                    .collect();
+                let selected = self.command_center_selected.min(filtered.len().saturating_sub(1));
+                let filtered_owned: Vec<(usize, String)> =
+                    filtered.into_iter().map(|(i, s)| (i, s.to_string())).collect();
+
+                el.child(
+                    div()
+                        .id("command-center-overlay")
+                        .absolute()
+                        .top(px(0.0))
+                        .left(px(0.0))
+                        .size_full()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .pt(px(150.0))
+                        .child(
+                            div()
+                                .id("command-center")
+                                .occlude()
+                                .flex()
+                                .flex_col()
+                                .w(px(400.0))
+                                .max_h(px(500.0))
+                                .bg(gpui::hsla(0.0, 0.0, 0.13, 1.0))
+                                .border_1()
+                                .border_color(gpui::hsla(0.0, 0.0, 0.3, 1.0))
+                                .rounded(px(8.0))
+                                .shadow_lg()
+                                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                                    this.show_command_center = false;
+                                    cx.notify();
+                                }))
+                                .child(
+                                    div()
+                                        .id("command-input")
+                                        .flex()
+                                        .flex_row()
+                                        .items_center()
+                                        .px(px(12.0))
+                                        .py(px(10.0))
+                                        .border_b_1()
+                                        .border_color(gpui::hsla(0.0, 0.0, 0.2, 1.0))
+                                        .child(
+                                            div()
+                                                .text_size(px(13.0))
+                                                .text_color(gpui::hsla(0.0, 0.0, 0.5, 1.0))
+                                                .child("M-x "),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .text_size(px(14.0))
+                                                .text_color(gpui::hsla(0.0, 0.0, 0.9, 1.0))
+                                                .child(if self.command_center_query.is_empty() {
+                                                    "Type a command...".into()
+                                                } else {
+                                                    SharedString::from(
+                                                        self.command_center_query.clone(),
+                                                    )
+                                                }),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .id("command-list")
+                                        .flex()
+                                        .flex_col()
+                                        .overflow_y_scroll()
+                                        .children(filtered_owned.iter().enumerate().map(
+                                            |(i, (cmd_idx, cmd))| {
+                                                let is_selected = i == selected;
+                                                let cmd_for_click = cmd.clone();
+                                                div()
+                                                    .id(ElementId::Name(
+                                                        format!("cmd-{cmd_idx}").into(),
+                                                    ))
+                                                    .px(px(12.0))
+                                                    .py(px(6.0))
+                                                    .text_size(px(13.0))
+                                                    .cursor_pointer()
+                                                    .text_color(if is_selected {
+                                                        gpui::hsla(0.0, 0.0, 1.0, 1.0)
+                                                    } else {
+                                                        gpui::hsla(0.0, 0.0, 0.8, 1.0)
+                                                    })
+                                                    .when(is_selected, |el| {
+                                                        el.bg(gpui::hsla(220.0, 0.6, 0.4, 1.0))
+                                                    })
+                                                    .hover(|s| {
+                                                        s.bg(gpui::hsla(220.0, 0.5, 0.35, 1.0))
+                                                    })
+                                                    .child(cmd.clone())
+                                                    .on_click(cx.listener(
+                                                        move |this, _, window, cx| {
+                                                            this.execute_command(
+                                                                &cmd_for_click,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        },
+                                                    ))
+                                            },
+                                        )),
+                                ),
+                        ),
+                )
+            })
             .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
                 for path in paths.paths() {
                     if path.is_file() {
