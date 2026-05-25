@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::{Context as _, Result, bail};
 use editor::{Editor, EditorMode, MultiBuffer};
 use gpui::{self, *};
+use gpui::ExternalPaths;
 use gpui::prelude::FluentBuilder as _;
 use language::{Buffer, LanguageRegistry};
 use serde::{Deserialize, Serialize};
@@ -1045,6 +1046,13 @@ impl Render for LiteWorkspace {
             .on_action(cx.listener(Self::handle_save_all))
             .on_action(cx.listener(Self::handle_toggle_toolbar))
             .on_action(cx.listener(Self::handle_move_to_group))
+            .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
+                for path in paths.paths() {
+                    if path.is_file() {
+                        this.open_file_path(path.clone(), window, cx).ok();
+                    }
+                }
+            }))
     }
 }
 
