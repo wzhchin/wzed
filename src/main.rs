@@ -5,8 +5,251 @@ use anyhow::{Context as _, Result, bail};
 use editor::{Editor, EditorMode, MultiBuffer};
 use gpui::*;
 use language::{Buffer, LanguageRegistry, LoadedLanguage};
-use settings::{KeymapFile, KeybindSource, DEFAULT_KEYMAP_PATH};
+use serde::{Deserialize, Serialize};
+use settings::{KeymapFile, DEFAULT_KEYMAP_PATH};
 use theme::{LoadThemes, ThemeSettingsProvider, UiDensity};
+
+// --- Session persistence ---
+
+fn config_dir() -> PathBuf {
+    dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("wzed")
+}
+
+fn session_path() -> PathBuf {
+    config_dir().join("session.json")
+}
+
+#[derive(Serialize, Deserialize)]
+struct SessionState {
+    tabs: Vec<SessionTab>,
+    active: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SessionTab {
+    path: Option<String>,
+    unsaved_content: Option<String>,
+}
+
+fn save_session(workspace: &LiteWorkspace, cx: &App) {
+    let dir = config_dir();
+    if let Err(err) = std::fs::create_dir_all(&dir) {
+        eprintln!("failed to create config dir: {err:#}");
+        return;
+    }
+
+    let tabs: Vec<SessionTab> = workspace
+        .tabs
+        .iter()
+        .map(|tab| {
+            let unsaved_content = if tab.path.is_none() {
+                Some(tab.editor.read(cx).text(cx).to_string())
+            } else {
+                None
+            };
+            SessionTab {
+                path: tab.path.as_ref().map(|p| p.to_string_lossy().into_owned()),
+                unsaved_content,
+            }
+        })
+        .collect();
+
+    let state = SessionState {
+        tabs,
+        active: workspace.active,
+    };
+
+    let path = session_path();
+    if let Err(err) = (|| -> Result<()> {
+        let json = serde_json::to_string_pretty(&state)?;
+        let mut tmp = path.clone();
+        tmp.set_extension("json.tmp");
+        std::fs::write(&tmp, &json)?;
+        std::fs::rename(&tmp, &path)?;
+        Ok(())
+    })() {
+        eprintln!("failed to save session: {err:#}");
+    }
+}
+
+// --- Single instance IPC ---
+
+struct SharedState {
+    sender: std::sync::mpsc::Sender<Vec<PathBuf>>,
+    workspace_handle: std::sync::Mutex<Option<WindowHandle<LiteWorkspace>>>,
+}
+
+struct OpenListener(Arc<SharedState>);
+
+impl Global for OpenListener {}
+
+impl OpenListener {
+    fn new(sender: std::sync::mpsc::Sender<Vec<PathBuf>>) -> Self {
+        Self(Arc::new(SharedState {
+            sender,
+            workspace_handle: std::sync::Mutex::new(None),
+        }))
+    }
+
+    fn shared(&self) -> Arc<SharedState> {
+        self.0.clone()
+    }
+
+    fn set_workspace(&self, handle: WindowHandle<LiteWorkspace>) {
+        *self.0.workspace_handle.lock().unwrap() = Some(handle);
+    }
+
+    fn workspace_handle(&self) -> Option<WindowHandle<LiteWorkspace>> {
+        self.0.workspace_handle.lock().unwrap().clone()
+    }
+
+    fn sender(&self) -> std::sync::mpsc::Sender<Vec<PathBuf>> {
+        self.0.sender.clone()
+    }
+}
+
+#[cfg(unix)]
+fn ipc_socket_path() -> PathBuf {
+    dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("wzed.sock")
+}
+
+#[cfg(unix)]
+fn try_send_to_existing_instance(paths: &[PathBuf]) -> bool {
+    use std::os::unix::net::UnixDatagram;
+
+    let sock_path = ipc_socket_path();
+    let sock = match UnixDatagram::unbound() {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    if sock.connect(&sock_path).is_err() {
+        return false;
+    }
+
+    let msg = paths
+        .iter()
+        .filter_map(|p| p.to_str().map(|s| s.to_owned()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    sock.send(msg.as_bytes()).is_ok()
+}
+
+#[cfg(unix)]
+fn listen_for_instances(sender: std::sync::mpsc::Sender<Vec<PathBuf>>) -> Result<()> {
+    use std::os::unix::net::UnixDatagram;
+    use std::thread;
+
+    let sock_path = ipc_socket_path();
+
+    if let Err(e) = UnixDatagram::unbound().and_then(|s| {
+        s.connect(&sock_path)?;
+        s.send(&[])
+    }) {
+        if e.kind() == std::io::ErrorKind::ConnectionRefused {
+            let _ = std::fs::remove_file(&sock_path);
+        }
+    }
+
+    let listener = UnixDatagram::bind(&sock_path)
+        .with_context(|| format!("failed to bind IPC socket at {}", sock_path.display()))?;
+
+    thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        loop {
+            if let Ok(len) = listener.recv(&mut buf) {
+                let text = String::from_utf8_lossy(&buf[..len]);
+                let paths: Vec<PathBuf> = text
+                    .split('\n')
+                    .filter(|s| !s.is_empty())
+                    .map(PathBuf::from)
+                    .collect();
+                if !paths.is_empty() {
+                    let _ = sender.send(paths);
+                }
+            }
+        }
+    });
+    Ok(())
+}
+
+#[cfg(windows)]
+fn try_send_to_existing_instance(paths: &[PathBuf]) -> bool {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+
+    let stream = match TcpStream::connect("127.0.0.1:0") {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    // Named pipes require windows-specific API; fall back to a localhost socket approach
+    // using a lock file to store the port.
+    let lock_path = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("wzed.port");
+    let port_str = match std::fs::read_to_string(&lock_path) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let port: u16 = match port_str.trim().parse() {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+
+    let mut stream = match TcpStream::connect(format!("127.0.0.1:{port}")) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+
+    let msg = paths
+        .iter()
+        .filter_map(|p| p.to_str().map(|s| s.to_owned()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    stream.write_all(msg.as_bytes()).is_ok()
+}
+
+#[cfg(windows)]
+fn listen_for_instances(sender: std::sync::mpsc::Sender<Vec<PathBuf>>) -> Result<()> {
+    use std::io::Read as _;
+    use std::net::TcpListener;
+    use std::thread;
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .context("failed to bind IPC listener")?;
+    let port = listener.local_addr()?.port();
+
+    let lock_path = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("wzed.port");
+    if let Some(parent) = lock_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&lock_path, port.to_string())?;
+
+    thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        loop {
+            if let Ok((mut stream, _)) = listener.accept() {
+                if let Ok(len) = stream.read(&mut buf) {
+                    let text = String::from_utf8_lossy(&buf[..len]);
+                    let paths: Vec<PathBuf> = text
+                        .split('\n')
+                        .filter(|s| !s.is_empty())
+                        .map(PathBuf::from)
+                        .collect();
+                    if !paths.is_empty() {
+                        let _ = sender.send(paths);
+                    }
+                }
+            }
+        }
+    });
+    Ok(())
+}
+
+// --- Main ---
 
 fn main() {
     let file_args: Vec<PathBuf> = std::env::args()
@@ -14,6 +257,12 @@ fn main() {
         .filter(|arg| !arg.starts_with('-'))
         .map(PathBuf::from)
         .collect();
+
+    if !file_args.is_empty() && try_send_to_existing_instance(&file_args) {
+        return;
+    }
+
+    let (ipc_sender, ipc_receiver) = std::sync::mpsc::channel::<Vec<PathBuf>>();
 
     let app =
         Application::with_platform(gpui_linux::current_platform(false)).with_assets(assets::Assets);
@@ -30,8 +279,35 @@ fn main() {
         let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
         register_languages(&languages);
 
+        cx.set_global(OpenListener::new(ipc_sender));
+        if let Err(err) = listen_for_instances(
+            cx.global::<OpenListener>().sender(),
+        ) {
+            eprintln!("IPC listener failed: {err:#}");
+        }
+
+        let shared_state = cx.global::<OpenListener>().shared();
+        cx.spawn(async move |cx| {
+            loop {
+                cx.background_executor().timer(std::time::Duration::from_millis(200)).await;
+                let Ok(paths) = ipc_receiver.try_recv() else {
+                    continue;
+                };
+                let Some(handle) = shared_state.workspace_handle.lock().unwrap().clone() else {
+                    continue;
+                };
+                handle.update(cx, |workspace, window, cx| {
+                    for path in &paths {
+                        if path.exists() {
+                            workspace.open_file_path(path.clone(), window, cx).ok();
+                        }
+                    }
+                }).ok();
+            }
+        }).detach();
+
         let file_args = file_args.clone();
-        cx.open_window(
+        let window_handle = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                     None,
@@ -59,18 +335,35 @@ fn main() {
             },
             move |window, cx| {
                 let workspace = cx.new(|cx| {
-                    let mut workspace = LiteWorkspace::new(languages, window, cx);
+                    let mut workspace = LiteWorkspace::new(languages.clone(), window, cx);
+
+                    workspace.restore_session(window, cx);
+
                     for path in &file_args {
                         if path.exists() {
                             workspace.open_file_path(path.clone(), window, cx).ok();
                         }
                     }
+                    workspace.save_session(cx);
                     workspace
                 });
+
                 workspace
             },
         )
         .expect("failed to open window");
+
+        cx.global::<OpenListener>().set_workspace(window_handle);
+
+        let _quit_subscription = cx.on_app_quit(|cx| {
+            let listener = cx.global::<OpenListener>();
+            if let Some(handle) = listener.workspace_handle() {
+                handle.read_with(cx, |workspace, cx| {
+                    save_session(workspace, cx);
+                }).ok();
+            }
+            std::future::ready(())
+        });
     });
 }
 
@@ -138,21 +431,152 @@ struct LiteWorkspace {
 impl LiteWorkspace {
     fn new(
         languages: Arc<LanguageRegistry>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
-        let editor = Self::create_empty_editor(window, cx);
 
         Self {
-            tabs: vec![Tab {
-                editor,
-                path: None,
-                title: "untitled".into(),
-            }],
+            tabs: Vec::new(),
             active: 0,
             languages,
             focus_handle,
+        }
+    }
+
+    fn restore_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let path = session_path();
+        let data = match std::fs::read_to_string(&path) {
+            Ok(d) => d,
+            Err(_) => {
+                self.tabs.push(Self::create_tab(
+                    None,
+                    "untitled".into(),
+                    String::new(),
+                    window,
+                    cx,
+                ));
+                return;
+            }
+        };
+
+        let state: SessionState = match serde_json::from_str(&data) {
+            Ok(s) => s,
+            Err(_) => {
+                self.tabs.push(Self::create_tab(
+                    None,
+                    "untitled".into(),
+                    String::new(),
+                    window,
+                    cx,
+                ));
+                return;
+            }
+        };
+
+        if state.tabs.is_empty() {
+            self.tabs.push(Self::create_tab(
+                None,
+                "untitled".into(),
+                String::new(),
+                window,
+                cx,
+            ));
+            return;
+        }
+
+        for (i, tab) in state.tabs.into_iter().enumerate() {
+            match tab.path {
+                Some(path_str) => {
+                    let path = PathBuf::from(&path_str);
+                    if path.exists() {
+                        if self.open_file_path(path.clone(), window, cx).is_err() {
+                            continue;
+                        }
+                    } else if let Some(content) = tab.unsaved_content {
+                        let title = path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| "untitled".into());
+                        self.tabs.push(Self::create_tab_from_content(
+                            Some(path),
+                            title.into(),
+                            content,
+                            &self.languages,
+                            window,
+                            cx,
+                        ));
+                    }
+                }
+                None => {
+                    let content = tab.unsaved_content.unwrap_or_default();
+                    self.tabs.push(Self::create_tab(
+                        None,
+                        "untitled".into(),
+                        content,
+                        window,
+                        cx,
+                    ));
+                }
+            }
+            if i == state.active {
+                self.active = self.tabs.len() - 1;
+            }
+        }
+
+        if self.active >= self.tabs.len() {
+            self.active = self.tabs.len().saturating_sub(1);
+        }
+    }
+
+    fn create_tab(
+        path: Option<PathBuf>,
+        title: SharedString,
+        content: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Tab {
+        let buffer = cx.new(|cx| Buffer::local(content, cx));
+        let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let editor = cx.new(|cx| Editor::new(EditorMode::full(), multibuffer, None, window, cx));
+        Tab {
+            editor,
+            path,
+            title,
+        }
+    }
+
+    fn create_tab_from_content(
+        path: Option<PathBuf>,
+        title: SharedString,
+        content: String,
+        languages: &Arc<LanguageRegistry>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Tab {
+        let path_for_lang = path.clone();
+        let languages = languages.clone();
+        let buffer = cx.new(|cx| {
+            let buffer = Buffer::local(content, cx);
+            buffer.set_language_registry(languages.clone());
+
+            let available = path_for_lang.as_ref().and_then(|p| languages.language_for_file_path(p));
+            if let Some(available) = available {
+                cx.spawn(async move |buffer: WeakEntity<Buffer>, cx| {
+                    let lang = languages.load_language(&available).await??;
+                    buffer.update(cx, |buf, cx| buf.set_language(Some(lang), cx))?;
+                    Result::<()>::Ok(())
+                })
+                .detach_and_log_err(cx);
+            }
+            buffer
+        });
+        let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let editor = cx.new(|cx| Editor::new(EditorMode::full(), multibuffer, None, window, cx));
+        Tab {
+            editor,
+            path,
+            title,
         }
     }
 
@@ -205,6 +629,7 @@ impl LiteWorkspace {
             title,
         });
         self.active = self.tabs.len() - 1;
+        self.save_session(cx);
         cx.notify();
         Ok(())
     }
@@ -219,7 +644,12 @@ impl LiteWorkspace {
         let content = tab.editor.read(cx).text(cx);
         std::fs::write(&path, &content)
             .with_context(|| format!("failed to write file: {}", path.display()))?;
+        self.save_session(cx);
         Ok(())
+    }
+
+    fn save_session(&self, cx: &App) {
+        save_session(self, cx);
     }
 
     fn handle_open(
@@ -255,6 +685,7 @@ impl LiteWorkspace {
             title: "untitled".into(),
         });
         self.active = self.tabs.len() - 1;
+        self.save_session(cx);
         cx.notify();
     }
 
@@ -271,6 +702,7 @@ impl LiteWorkspace {
         if self.active >= self.tabs.len() {
             self.active = self.tabs.len() - 1;
         }
+        self.save_session(cx);
         cx.notify();
     }
 }
