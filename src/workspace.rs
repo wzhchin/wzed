@@ -381,12 +381,16 @@ impl LiteWorkspace {
 
             let available = languages.language_for_file_path(&path_for_lang);
             if let Some(available) = available {
+                let lang_name = available.name().to_string();
                 cx.spawn(async move |buffer: WeakEntity<Buffer>, cx| {
                     let lang = languages.load_language(&available).await??;
+                    eprintln!("loaded language: {lang_name}");
                     buffer.update(cx, |buf, cx| buf.set_language(Some(lang), cx))?;
                     Result::<()>::Ok(())
                 })
                 .detach_and_log_err(cx);
+            } else {
+                eprintln!("no language found for: {}", path_for_lang.display());
             }
             buffer
         });
