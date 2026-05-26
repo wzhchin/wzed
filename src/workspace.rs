@@ -131,6 +131,7 @@ pub(crate) struct LiteWorkspace {
     recent_files: RecentFiles,
     show_recent_menu: bool,
     tab_scroll_handle: ScrollHandle,
+    last_scrolled_active: usize,
     show_command_center: bool,
     command_center_query: String,
     command_center_selected: usize,
@@ -158,6 +159,7 @@ impl LiteWorkspace {
             recent_files: RecentFiles::load_from_disk(),
             show_recent_menu: false,
             tab_scroll_handle: ScrollHandle::new(),
+            last_scrolled_active: 0,
             show_command_center: false,
             command_center_query: String::new(),
             command_center_selected: 0,
@@ -1157,7 +1159,13 @@ impl Render for LiteWorkspace {
                 group: tab.group.clone(),
             })
             .collect();
-        let tab_list = tab_groups::render_tab_list(&tab_infos, &self.tab_scroll_handle, cx);
+        let tab_list = tab_groups::render_tab_list(
+            &tab_infos,
+            &self.tab_scroll_handle,
+            self.last_scrolled_active,
+            cx,
+        );
+        self.last_scrolled_active = self.active;
 
         let side_tabs = div()
             .id("side-tabs")
