@@ -1,5 +1,22 @@
+use std::path::PathBuf;
+
+use editor::Editor;
 use gpui::*;
 use gpui::prelude::FluentBuilder as _;
+
+pub(crate) struct Tab {
+    pub editor: Entity<Editor>,
+    pub path: Option<PathBuf>,
+    pub title: SharedString,
+    pub group: Option<SharedString>,
+    pub encoding: &'static encoding_rs::Encoding,
+}
+
+impl Tab {
+    pub(crate) fn is_dirty(&self, cx: &App) -> bool {
+        self.editor.read(cx).buffer().read(cx).is_dirty(cx)
+    }
+}
 
 pub(crate) struct TabInfo {
     pub index: usize,
@@ -34,7 +51,7 @@ pub(crate) fn render_tab_list(
     tabs: &[TabInfo],
     scroll_handle: &ScrollHandle,
     last_scrolled_active: usize,
-    cx: &mut Context<crate::workspace::LiteWorkspace>,
+    cx: &Context<crate::workspace::LiteWorkspace>,
 ) -> impl IntoElement {
     let mut children: Vec<AnyElement> = Vec::new();
     let mut last_group: Option<&SharedString> = None;

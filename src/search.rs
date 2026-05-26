@@ -4,6 +4,11 @@ use editor::{
 };
 use gpui::*;
 
+use crate::workspace::LiteWorkspace;
+use crate::{
+    FindNext, FindPrevious, ReplaceAll, ReplaceNext, ToggleFind, ToggleRegex,
+};
+
 pub(crate) struct TabSearchResult {
     pub tab_index: usize,
     pub title: SharedString,
@@ -256,4 +261,216 @@ impl SearchState {
             })
             .collect();
     }
+}
+
+pub(crate) fn render_search_bar(
+    this: &LiteWorkspace,
+    cx: &Context<LiteWorkspace>,
+) -> Option<impl IntoElement> {
+    if !this.search.visible {
+        return None;
+    }
+
+    let total = this.search.matches.len();
+    let current = this.search.current_match.map(|i| i + 1).unwrap_or(0);
+    let match_info = format!("{current}/{total}");
+
+    let find_row = div()
+        .id("find-row")
+        .flex()
+        .flex_row()
+        .items_center()
+        .w_full()
+        .h(px(36.0))
+        .px(px(8.0))
+        .gap(px(6.0))
+        .child(this.search.query_editor.clone())
+        .child(
+            div()
+                .text_size(px(12.0))
+                .text_color(gpui::hsla(0.0, 0.0, 0.6, 1.0))
+                .child(match_info),
+        )
+        .child(
+            div()
+                .id("find-prev-btn")
+                .cursor_pointer()
+                .px(px(6.0))
+                .py(px(2.0))
+                .text_size(px(14.0))
+                .text_color(gpui::hsla(0.0, 0.0, 0.7, 1.0))
+                .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.2, 1.0)))
+                .child("^")
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.handle_find_previous(&FindPrevious, window, cx);
+                })),
+        )
+        .child(
+            div()
+                .id("find-next-btn")
+                .cursor_pointer()
+                .px(px(6.0))
+                .py(px(2.0))
+                .text_size(px(14.0))
+                .text_color(gpui::hsla(0.0, 0.0, 0.7, 1.0))
+                .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.2, 1.0)))
+                .child("v")
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.handle_find_next(&FindNext, window, cx);
+                })),
+        )
+        .child(
+            div()
+                .id("find-close-btn")
+                .cursor_pointer()
+                .px(px(6.0))
+                .py(px(2.0))
+                .text_size(px(14.0))
+                .text_color(gpui::hsla(0.0, 0.0, 0.5, 1.0))
+                .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.2, 1.0)))
+                .child("x")
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.handle_toggle_find(&ToggleFind, window, cx);
+                })),
+        )
+        .child(
+            div()
+                .id("regex-toggle-btn")
+                .cursor_pointer()
+                .px(px(6.0))
+                .py(px(2.0))
+                .text_size(px(12.0))
+                .text_color(if this.search.use_regex {
+                    gpui::hsla(48.0 / 360.0, 1.0, 0.6, 1.0)
+                } else {
+                    gpui::hsla(0.0, 0.0, 0.5, 1.0)
+                })
+                .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.2, 1.0)))
+                .child(".*")
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.handle_toggle_regex(&ToggleRegex, window, cx);
+                })),
+        );
+
+    let replace_row = this.search.show_replace.then(|| {
+        div()
+            .id("replace-row")
+            .flex()
+            .flex_row()
+            .items_center()
+            .w_full()
+            .h(px(36.0))
+            .px(px(8.0))
+            .gap(px(6.0))
+            .border_t_1()
+            .border_color(gpui::hsla(0.0, 0.0, 0.12, 1.0))
+            .child(this.search.replace_editor.clone())
+            .child(
+                div()
+                    .id("replace-btn")
+                    .cursor_pointer()
+                    .px(px(6.0))
+                    .py(px(2.0))
+                    .text_size(px(12.0))
+                    .text_color(gpui::hsla(0.0, 0.0, 0.7, 1.0))
+                    .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.2, 1.0)))
+                    .child("Replace")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.handle_replace_next(&ReplaceNext, window, cx);
+                    })),
+            )
+            .child(
+                div()
+                    .id("replace-all-btn")
+                    .cursor_pointer()
+                    .px(px(6.0))
+                    .py(px(2.0))
+                    .text_size(px(12.0))
+                    .text_color(gpui::hsla(0.0, 0.0, 0.7, 1.0))
+                    .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.2, 1.0)))
+                    .child("All")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.handle_replace_all(&ReplaceAll, window, cx);
+                    })),
+            )
+    });
+
+    Some(
+        div()
+            .id("search-bar")
+            .flex()
+            .flex_col()
+            .w_full()
+            .bg(gpui::hsla(0.0, 0.0, 0.13, 1.0))
+            .border_b_1()
+            .border_color(gpui::hsla(0.0, 0.0, 0.15, 1.0))
+            .child(find_row)
+            .children(replace_row),
+    )
+}
+
+pub(crate) fn render_multi_tab_results(
+    this: &LiteWorkspace,
+    cx: &Context<LiteWorkspace>,
+) -> Option<impl IntoElement> {
+    if !this.search.search_all_tabs {
+        return None;
+    }
+    let results = &this.search.tab_results;
+    if results.is_empty() {
+        return None;
+    }
+
+    Some(
+        div()
+            .id("multi-tab-results")
+            .flex()
+            .flex_col()
+            .w_full()
+            .max_h(px(200.0))
+            .overflow_y_scroll()
+            .border_t_1()
+            .border_color(gpui::hsla(0.0, 0.0, 0.15, 1.0))
+            .bg(gpui::hsla(0.0, 0.0, 0.08, 1.0))
+            .children(results.iter().map(|result| {
+                let tab_index = result.tab_index;
+                div()
+                    .id(ElementId::Name(format!("search-result-{tab_index}").into()))
+                    .flex()
+                    .flex_col()
+                    .px(px(10.0))
+                    .py(px(4.0))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.15, 1.0)))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap(px(8.0))
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(gpui::hsla(0.0, 0.0, 0.9, 1.0))
+                                    .child(result.title.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(gpui::hsla(0.0, 0.0, 0.5, 1.0))
+                                    .child(format!("{} matches", result.match_count)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(gpui::hsla(0.0, 0.0, 0.4, 1.0))
+                            .text_ellipsis()
+                            .child(result.first_line.clone()),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.active = tab_index;
+                        cx.notify();
+                    }))
+            })),
+    )
 }

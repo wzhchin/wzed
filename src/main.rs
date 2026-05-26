@@ -1,3 +1,4 @@
+mod command_center;
 mod ipc;
 mod search;
 mod app_theme;
@@ -5,7 +6,8 @@ mod diff_view;
 mod encoding;
 mod file_watcher;
 mod recent_files;
-mod tab_groups;
+mod tab;
+mod toolbar;
 mod workspace;
 
 use std::path::PathBuf;

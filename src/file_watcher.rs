@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use gpui::*;
 
-use crate::workspace::Tab;
+use crate::tab::Tab;
 
 pub(crate) struct FileWatcher {
     watched: Vec<WatchedFile>,
