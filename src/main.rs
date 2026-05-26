@@ -184,6 +184,14 @@ fn main() {
                     workspace
                 });
 
+                let workspace_close = workspace.clone();
+                window.on_window_should_close(cx, move |_window, cx| {
+                    workspace_close.read_with(cx, |workspace, cx| {
+                        workspace::save_session_from_outside(workspace, cx);
+                    });
+                    true
+                });
+
                 workspace
             },
         )
@@ -191,7 +199,7 @@ fn main() {
 
         cx.global::<OpenListener>().set_workspace(window_handle);
 
-        let _quit_subscription = cx.on_app_quit(|cx| {
+        cx.on_app_quit(|cx| {
             let listener = cx.global::<OpenListener>();
             if let Some(handle) = listener.workspace_handle() {
                 handle.read_with(cx, |workspace, cx| {
@@ -199,7 +207,8 @@ fn main() {
                 }).ok();
             }
             std::future::ready(())
-        });
+        })
+        .detach();
     });
 }
 

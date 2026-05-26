@@ -55,7 +55,7 @@ fn save_session(workspace: &LiteWorkspace, cx: &App) {
         .tabs
         .iter()
         .map(|tab| {
-            let unsaved_content = if tab.path.is_none() {
+            let unsaved_content = if tab.path.is_none() || tab.is_dirty(cx) {
                 Some(tab.editor.read(cx).text(cx).to_string())
             } else {
                 None
@@ -86,6 +86,7 @@ fn save_session(workspace: &LiteWorkspace, cx: &App) {
 }
 
 pub(crate) fn save_session_from_outside(workspace: &LiteWorkspace, cx: &App) {
+    workspace.save_dirty_snapshots(cx);
     save_session(workspace, cx);
 }
 
@@ -229,6 +230,12 @@ impl LiteWorkspace {
                     if path.exists() {
                         if self.open_file_path(path.clone(), window, cx).is_err() {
                             continue;
+                        }
+                        if let Some(content) = tab.unsaved_content {
+                            let last_idx = self.tabs.len() - 1;
+                            self.tabs[last_idx].editor.update(cx, |editor, cx| {
+                                editor.set_text(content.as_str(), window, cx);
+                            });
                         }
                     } else if let Some(content) = tab.unsaved_content {
                         let title = path
@@ -504,11 +511,7 @@ impl LiteWorkspace {
         cx.notify();
     }
 
-    fn handle_autosave(
-        &mut self,
-        _action: &AutosaveTimer,
-        cx: &mut Context<Self>,
-    ) {
+    fn save_dirty_snapshots(&self, cx: &App) {
         let snapshots_dir = config_dir().join("snapshots");
         if let Err(err) = std::fs::create_dir_all(&snapshots_dir) {
             eprintln!("failed to create snapshots dir: {err:#}");
@@ -527,6 +530,15 @@ impl LiteWorkspace {
                 eprintln!("autosave snapshot failed: {err:#}");
             }
         }
+    }
+
+    fn handle_autosave(
+        &mut self,
+        _action: &AutosaveTimer,
+        cx: &mut Context<Self>,
+    ) {
+        self.save_dirty_snapshots(cx);
+        self.save_session(cx);
     }
 
     pub(crate) fn handle_new(
