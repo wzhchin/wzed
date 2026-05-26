@@ -709,12 +709,15 @@ impl LiteWorkspace {
     fn handle_toggle_command_center(
         &mut self,
         _action: &ToggleCommandCenter,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.show_command_center = !self.show_command_center;
         self.command_center_query.clear();
         self.command_center_selected = 0;
+        if self.show_command_center {
+            self.focus_handle.focus(window, cx);
+        }
         cx.notify();
     }
 
@@ -1410,6 +1413,10 @@ impl Render for LiteWorkspace {
                 let selected = self.command_center_selected.min(filtered.len().saturating_sub(1));
                 let filtered_owned: Vec<(usize, String)> =
                     filtered.into_iter().map(|(i, s)| (i, s.to_string())).collect();
+                let selected_cmd = filtered_owned
+                    .get(selected)
+                    .map(|(_, c)| c.clone())
+                    .unwrap_or_default();
 
                 el.child(
                     div()
@@ -1426,6 +1433,8 @@ impl Render for LiteWorkspace {
                             div()
                                 .id("command-center")
                                 .occlude()
+                                .focusable()
+                                .track_focus(&self.focus_handle)
                                 .flex()
                                 .flex_col()
                                 .w(px(400.0))
@@ -1439,9 +1448,52 @@ impl Render for LiteWorkspace {
                                     this.show_command_center = false;
                                     cx.notify();
                                 }))
+                                .on_key_down(cx.listener(
+                                    move |this, event: &KeyDownEvent, window, cx| {
+                                        match event.keystroke.key.as_str() {
+                                            "escape" => {
+                                                this.show_command_center = false;
+                                                cx.notify();
+                                            }
+                                            "up" => {
+                                                this.command_center_selected =
+                                                    this.command_center_selected.saturating_sub(1);
+                                                cx.notify();
+                                            }
+                                            "down" => {
+                                                this.command_center_selected += 1;
+                                                cx.notify();
+                                            }
+                                            "enter" => {
+                                                this.execute_command(
+                                                    &selected_cmd,
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
+                                            "backspace" => {
+                                                this.command_center_query.pop();
+                                                this.command_center_selected = 0;
+                                                cx.notify();
+                                            }
+                                            _ => {
+                                                if let Some(ch) = event.keystroke.key.chars().next()
+                                                {
+                                                    if ch.is_alphanumeric()
+                                                        || ch == ' '
+                                                        || ch == '-'
+                                                    {
+                                                        this.command_center_query.push(ch);
+                                                        this.command_center_selected = 0;
+                                                        cx.notify();
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    },
+                                ))
                                 .child(
                                     div()
-                                        .id("command-input")
                                         .flex()
                                         .flex_row()
                                         .items_center()

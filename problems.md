@@ -11,3 +11,7 @@
 - cmd-center: change encoding
 - cmd-center: change file type(json/java)
 - 仍然没有代码高亮，语法文件应该是加载了
+- [x] cmd-center: 没有获得焦点，打开 cmd-center 后，按上下键，仍然是编辑器焦点切换
+- change-encoding 应该打开一个二级 center
+- recent-files: 应该打开一个二级 ceneter
+- change file-type: 打开二级 center
