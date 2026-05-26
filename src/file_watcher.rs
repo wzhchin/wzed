@@ -11,7 +11,6 @@ pub(crate) struct FileWatcher {
 struct WatchedFile {
     path: PathBuf,
     last_modified: Option<std::time::SystemTime>,
-    last_known_content_hash: u64,
 }
 
 impl FileWatcher {
@@ -30,18 +29,17 @@ impl FileWatcher {
 
         for (i, tab) in tabs.iter_mut().enumerate() {
             let Some(path) = &tab.path else { continue };
+            if tab.is_dirty(cx) {
+                continue;
+            }
 
             let modified = std::fs::metadata(path)
                 .ok()
                 .and_then(|m| m.modified().ok());
 
-            let current_hash = simple_hash(&tab.editor.read(cx).text(cx));
-
             let entry = self.watched.iter().find(|w| w.path == *path);
             let needs_check = match entry {
-                Some(w) => {
-                    modified != w.last_modified && current_hash == w.last_known_content_hash
-                }
+                Some(w) => modified != w.last_modified,
                 None => true,
             };
 
@@ -61,17 +59,29 @@ impl FileWatcher {
 
             if let Some(entry) = self.watched.iter_mut().find(|w| w.path == *path) {
                 entry.last_modified = modified;
-                entry.last_known_content_hash = simple_hash(&editor_content);
             } else {
                 self.watched.push(WatchedFile {
                     path: path.clone(),
                     last_modified: modified,
-                    last_known_content_hash: simple_hash(&editor_content),
                 });
             }
         }
 
         changed
+    }
+
+    pub(crate) fn update_mtime(&mut self, path: &PathBuf) {
+        let modified = std::fs::metadata(path)
+            .ok()
+            .and_then(|m| m.modified().ok());
+        if let Some(entry) = self.watched.iter_mut().find(|w| w.path == *path) {
+            entry.last_modified = modified;
+        } else {
+            self.watched.push(WatchedFile {
+                path: path.clone(),
+                last_modified: modified,
+            });
+        }
     }
 
     pub(crate) fn reload_tab(tab: &mut Tab, window: &mut Window, cx: &mut App) {
@@ -84,12 +94,4 @@ impl FileWatcher {
             editor.set_text(content.as_str(), window, cx);
         });
     }
-}
-
-fn simple_hash(s: &str) -> u64 {
-    let mut hash: u64 = 5381;
-    for byte in s.bytes() {
-        hash = hash.wrapping_mul(33).wrapping_add(byte as u64);
-    }
-    hash
 }

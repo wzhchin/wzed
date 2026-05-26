@@ -115,7 +115,7 @@ pub(crate) struct Tab {
 }
 
 impl Tab {
-    fn is_dirty(&self, cx: &App) -> bool {
+    pub(crate) fn is_dirty(&self, cx: &App) -> bool {
         self.editor.read(cx).buffer().read(cx).is_dirty(cx)
     }
 }
@@ -425,6 +425,7 @@ impl LiteWorkspace {
         let content = tab.editor.read(cx).text(cx);
         std::fs::write(&path, &content)
             .with_context(|| format!("failed to write file: {}", path.display()))?;
+        self.file_watcher.update_mtime(&path);
         self.save_session(cx);
         Ok(())
     }
@@ -441,6 +442,7 @@ impl LiteWorkspace {
             .unwrap_or("untitled".into());
         self.recent_files.add(&path);
         self.recent_files.save_to_disk();
+        self.file_watcher.update_mtime(&path);
         self.save_session(cx);
         cx.notify();
         Ok(())
@@ -514,10 +516,12 @@ impl LiteWorkspace {
     ) {
         for i in 0..self.tabs.len() {
             let tab = &self.tabs[i];
-            let Some(path) = &tab.path else { continue };
+            let Some(path) = tab.path.clone() else { continue };
             let content = tab.editor.read(cx).text(cx);
-            if let Err(err) = std::fs::write(path, &content) {
+            if let Err(err) = std::fs::write(&path, &content) {
                 eprintln!("failed to save {}: {err:#}", path.display());
+            } else {
+                self.file_watcher.update_mtime(&path);
             }
         }
         self.save_session(cx);
@@ -540,17 +544,12 @@ impl LiteWorkspace {
                 continue;
             }
 
-            if let Some(path) = &tab.path {
-                let content = tab.editor.read(cx).text(cx);
-                if let Err(err) = std::fs::write(path, &content) {
-                    eprintln!("autosave failed for {}: {err:#}", path.display());
-                }
-            }
-
             let content = tab.editor.read(cx).text(cx);
             let timestamp = chrono_like_timestamp();
             let snapshot_name = format!("tab-{i}-{timestamp}.txt");
-            let _ = std::fs::write(snapshots_dir.join(&snapshot_name), &content);
+            if let Err(err) = std::fs::write(snapshots_dir.join(&snapshot_name), &content) {
+                eprintln!("autosave snapshot failed: {err:#}");
+            }
         }
     }
 
