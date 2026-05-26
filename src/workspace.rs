@@ -96,6 +96,14 @@ fn chrono_like_timestamp() -> String {
     format!("{}", now.as_secs())
 }
 
+#[derive(Clone)]
+enum CommandSubmenu {
+    SwitchBuffer,
+    ChangeEncoding,
+    ChangeFileType,
+    RecentFiles,
+}
+
 // --- Tab and Workspace ---
 
 pub(crate) struct Tab {
@@ -126,6 +134,7 @@ pub(crate) struct LiteWorkspace {
     show_command_center: bool,
     command_center_query: String,
     command_center_selected: usize,
+    command_submenu: Option<CommandSubmenu>,
     diff_state: Option<diff_view::DiffState>,
 }
 
@@ -152,6 +161,7 @@ impl LiteWorkspace {
             show_command_center: false,
             command_center_query: String::new(),
             command_center_selected: 0,
+            command_submenu: None,
             diff_state: None,
         };
 
@@ -715,6 +725,7 @@ impl LiteWorkspace {
         self.show_command_center = !self.show_command_center;
         self.command_center_query.clear();
         self.command_center_selected = 0;
+        self.command_submenu = None;
         if self.show_command_center {
             self.focus_handle.focus(window, cx);
         }
@@ -722,8 +733,40 @@ impl LiteWorkspace {
     }
 
     fn execute_command(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
+        match name {
+            "Switch Buffer" => {
+                self.command_submenu = Some(CommandSubmenu::SwitchBuffer);
+                self.command_center_query.clear();
+                self.command_center_selected = 0;
+                cx.notify();
+                return;
+            }
+            "Switch Encoding" => {
+                self.command_submenu = Some(CommandSubmenu::ChangeEncoding);
+                self.command_center_query.clear();
+                self.command_center_selected = 0;
+                cx.notify();
+                return;
+            }
+            "Change File Type" => {
+                self.command_submenu = Some(CommandSubmenu::ChangeFileType);
+                self.command_center_query.clear();
+                self.command_center_selected = 0;
+                cx.notify();
+                return;
+            }
+            "Recent Files" => {
+                self.command_submenu = Some(CommandSubmenu::RecentFiles);
+                self.command_center_query.clear();
+                self.command_center_selected = 0;
+                cx.notify();
+                return;
+            }
+            _ => {}
+        }
         self.show_command_center = false;
         self.command_center_query.clear();
+        self.command_submenu = None;
         match name {
             "New File" => self.handle_new(&NewFile, window, cx),
             "Open File" => self.handle_open(&OpenFile, window, cx),
@@ -740,9 +783,75 @@ impl LiteWorkspace {
             "Search All Tabs" => self.handle_search_all_tabs(&SearchAllTabs, window, cx),
             "Toggle Toolbar" => self.handle_toggle_toolbar(&ToggleToolbar, window, cx),
             "Move to Group" => self.handle_move_to_group(&MoveToGroup, window, cx),
-            "Switch Encoding" => self.handle_reload_encoding(&ReloadWithEncoding, window, cx),
             "Compare Files" => self.handle_compare_files(&CompareFiles, window, cx),
             _ => {}
+        }
+    }
+
+    fn execute_submenu_item(
+        &mut self,
+        submenu: &CommandSubmenu,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_command_center = false;
+        self.command_center_query.clear();
+        self.command_submenu = None;
+        match submenu {
+            CommandSubmenu::SwitchBuffer => {
+                if index < self.tabs.len() {
+                    self.active = index;
+                    cx.notify();
+                }
+            }
+            CommandSubmenu::ChangeEncoding => {
+                let encodings = encoding::SUPPORTED_ENCODINGS;
+                if let Some(&label) = encodings.get(index) {
+                    if let Some(enc) = encoding::encoding_from_label(label) {
+                        let tab = &self.tabs[self.active];
+                        if let Some(path) = tab.path.clone() {
+                            if let Ok(content) = encoding::read_file_as_encoding(&path, enc) {
+                                let tab = &mut self.tabs[self.active];
+                                tab.encoding = enc;
+                                tab.editor.update(cx, |editor, cx| {
+                                    editor.set_text(content.as_str(), window, cx);
+                                });
+                            }
+                        }
+                    }
+                }
+                cx.notify();
+            }
+            CommandSubmenu::ChangeFileType => {
+                let grammar_names = [
+                    "bash", "c", "cpp", "css", "diff", "go", "json", "jsonc", "markdown",
+                    "python", "regex", "rust", "tsx", "typescript", "yaml",
+                ];
+                if let Some(&grammar_name) = grammar_names.get(index) {
+                    let languages = self.languages.clone();
+                    let buffer = {
+                        let tab = &self.tabs[self.active];
+                        tab.editor.read(cx).buffer().read(cx).as_singleton().map(|b| b.clone())
+                    };
+                    if let Some(buffer) = buffer {
+                        cx.spawn(async move |_, cx| {
+                            let lang = languages.language_for_name(grammar_name).await?;
+                            buffer.update(cx, |buf, cx| {
+                                buf.set_language(Some(lang), cx);
+                            });
+                            Result::<()>::Ok(())
+                        })
+                        .detach_and_log_err(cx);
+                    }
+                }
+                cx.notify();
+            }
+            CommandSubmenu::RecentFiles => {
+                if let Some(path) = self.recent_files.entries.get(index).cloned() {
+                    self.open_file_path(path, window, cx).ok();
+                }
+            }
         }
     }
 
@@ -1378,12 +1487,14 @@ impl Render for LiteWorkspace {
             .on_action(cx.listener(Self::handle_compare_files))
             .on_action(cx.listener(Self::handle_toggle_command_center))
             .when(self.show_command_center, |el| {
-                let commands = [
+                let main_commands = [
                     "New File",
                     "Open File",
+                    "Recent Files",
                     "Save File",
                     "Save All",
                     "Close Tab",
+                    "Switch Buffer",
                     "Find",
                     "Find Next",
                     "Find Previous",
@@ -1395,25 +1506,68 @@ impl Render for LiteWorkspace {
                     "Toggle Toolbar",
                     "Move to Group",
                     "Switch Encoding",
+                    "Change File Type",
                     "Compare Files",
                 ];
-                let filtered: Vec<(usize, &str)> = commands
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, cmd)| {
-                        if self.command_center_query.is_empty() {
-                            true
-                        } else {
-                            cmd.to_lowercase()
-                                .contains(&self.command_center_query.to_lowercase())
-                        }
-                    })
-                    .map(|(i, s)| (i, *s))
-                    .collect();
+                let submenu_items: Vec<String> = match &self.command_submenu {
+                    Some(CommandSubmenu::SwitchBuffer) => {
+                        self.tabs.iter().map(|t| t.title.to_string()).collect()
+                    }
+                    Some(CommandSubmenu::ChangeEncoding) => {
+                        encoding::SUPPORTED_ENCODINGS.iter().map(|s| s.to_string()).collect()
+                    }
+                    Some(CommandSubmenu::ChangeFileType) => {
+                        ["Bash", "C", "C++", "CSS", "Diff", "Go", "JSON", "JSONC", "Markdown",
+                         "Python", "Regex", "Rust", "TSX", "TypeScript", "YAML",
+                        ].iter().map(|s| s.to_string()).collect()
+                    }
+                    Some(CommandSubmenu::RecentFiles) => {
+                        self.recent_files.entries.iter().take(20)
+                            .filter_map(|p| p.to_str().map(|s| s.to_string()))
+                            .collect()
+                    }
+                    None => Vec::new(),
+                };
+                let submenu_title: Option<&str> = match &self.command_submenu {
+                    Some(CommandSubmenu::SwitchBuffer) => Some("Switch Buffer"),
+                    Some(CommandSubmenu::ChangeEncoding) => Some("Switch Encoding"),
+                    Some(CommandSubmenu::ChangeFileType) => Some("Change File Type"),
+                    Some(CommandSubmenu::RecentFiles) => Some("Recent Files"),
+                    None => None,
+                };
+                let submenu_clone = self.command_submenu.clone();
+                let is_submenu = self.command_submenu.is_some();
+                let filtered: Vec<(usize, String)> = if is_submenu {
+                    submenu_items
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, item)| {
+                            if self.command_center_query.is_empty() {
+                                true
+                            } else {
+                                item.to_lowercase()
+                                    .contains(&self.command_center_query.to_lowercase())
+                            }
+                        })
+                        .map(|(i, s)| (i, s.clone()))
+                        .collect()
+                } else {
+                    main_commands
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, cmd)| {
+                            if self.command_center_query.is_empty() {
+                                true
+                            } else {
+                                cmd.to_lowercase()
+                                    .contains(&self.command_center_query.to_lowercase())
+                            }
+                        })
+                        .map(|(i, s)| (i, s.to_string()))
+                        .collect()
+                };
                 let selected = self.command_center_selected.min(filtered.len().saturating_sub(1));
-                let filtered_owned: Vec<(usize, String)> =
-                    filtered.into_iter().map(|(i, s)| (i, s.to_string())).collect();
-                let selected_cmd = filtered_owned
+                let selected_cmd = filtered
                     .get(selected)
                     .map(|(_, c)| c.clone())
                     .unwrap_or_default();
@@ -1448,11 +1602,20 @@ impl Render for LiteWorkspace {
                                     this.show_command_center = false;
                                     cx.notify();
                                 }))
-                                .on_key_down(cx.listener(
-                                    move |this, event: &KeyDownEvent, window, cx| {
+                                .on_key_down({
+                                    let filtered_for_keys = filtered.clone();
+                                    let submenu_for_keys = submenu_clone.clone();
+                                    cx.listener(
+                                        move |this, event: &KeyDownEvent, window, cx| {
                                         match event.keystroke.key.as_str() {
                                             "escape" => {
-                                                this.show_command_center = false;
+                                                if this.command_submenu.is_some() {
+                                                    this.command_submenu = None;
+                                                    this.command_center_query.clear();
+                                                    this.command_center_selected = 0;
+                                                } else {
+                                                    this.show_command_center = false;
+                                                }
                                                 cx.notify();
                                             }
                                             "up" => {
@@ -1465,11 +1628,26 @@ impl Render for LiteWorkspace {
                                                 cx.notify();
                                             }
                                             "enter" => {
-                                                this.execute_command(
-                                                    &selected_cmd,
-                                                    window,
-                                                    cx,
-                                                );
+                                                if is_submenu {
+                                                    let selected_idx = filtered_for_keys
+                                                        .get(this.command_center_selected)
+                                                        .map(|(i, _)| *i)
+                                                        .unwrap_or(0);
+                                                    if let Some(ref sub) = submenu_for_keys {
+                                                        this.execute_submenu_item(
+                                                            sub,
+                                                            selected_idx,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    }
+                                                } else {
+                                                    this.execute_command(
+                                                        &selected_cmd,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                }
                                             }
                                             "backspace" => {
                                                 this.command_center_query.pop();
@@ -1491,7 +1669,8 @@ impl Render for LiteWorkspace {
                                             }
                                         }
                                     },
-                                ))
+                                )
+                                })
                                 .child(
                                     div()
                                         .flex()
@@ -1505,7 +1684,11 @@ impl Render for LiteWorkspace {
                                             div()
                                                 .text_size(px(13.0))
                                                 .text_color(gpui::hsla(0.0, 0.0, 0.5, 1.0))
-                                                .child("M-x "),
+                                                .child(if is_submenu {
+                                                    submenu_title.unwrap_or("M-x")
+                                                } else {
+                                                    "M-x "
+                                                }),
                                         )
                                         .child(
                                             div()
@@ -1527,10 +1710,11 @@ impl Render for LiteWorkspace {
                                         .flex()
                                         .flex_col()
                                         .overflow_y_scroll()
-                                        .children(filtered_owned.iter().enumerate().map(
+                                        .children(filtered.iter().enumerate().map(
                                             |(i, (cmd_idx, cmd))| {
                                                 let is_selected = i == selected;
-                                                let cmd_for_click = cmd.clone();
+                                                let cmd_text = cmd.clone();
+                                                let click_idx = *cmd_idx;
                                                 div()
                                                     .id(ElementId::Name(
                                                         format!("cmd-{cmd_idx}").into(),
@@ -1550,16 +1734,19 @@ impl Render for LiteWorkspace {
                                                     .hover(|s| {
                                                         s.bg(gpui::hsla(220.0, 0.5, 0.35, 1.0))
                                                     })
-                                                    .child(cmd.clone())
-                                                    .on_click(cx.listener(
-                                                        move |this, _, window, cx| {
-                                                            this.execute_command(
-                                                                &cmd_for_click,
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        },
-                                                    ))
+                                                    .child(cmd_text.clone())
+                                                    .on_click({
+                                                        let sub = submenu_clone.clone();
+                                                        cx.listener(
+                                                            move |this, _, window, cx| {
+                                                                if let Some(ref sub) = sub {
+                                                                    this.execute_submenu_item(sub, click_idx, window, cx);
+                                                                } else {
+                                                                    this.execute_command(&cmd_text, window, cx);
+                                                                }
+                                                            },
+                                                        )
+                                                    })
                                             },
                                         )),
                                 ),

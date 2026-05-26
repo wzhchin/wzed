@@ -6,12 +6,12 @@
 - [x] 没有语法高亮，任何代码高亮都没有
 - [x] 当打开某个项目时，应该 scroll-into-view
 - [x] 添加 command-center, 使用 m-x 呼出，放在 window center
-- command-center: open file
-- cmd-center: switch buffer -> sub menu
-- cmd-center: change encoding
-- cmd-center: change file type(json/java)
+- [x] command-center: open file
+- [x] cmd-center: switch buffer -> sub menu
+- [x] cmd-center: change encoding
+- [x] cmd-center: change file type(json/java)
 - 仍然没有代码高亮，语法文件应该是加载了
 - [x] cmd-center: 没有获得焦点，打开 cmd-center 后，按上下键，仍然是编辑器焦点切换
-- change-encoding 应该打开一个二级 center
-- recent-files: 应该打开一个二级 ceneter
-- change file-type: 打开二级 center
+- [x] change-encoding 应该打开一个二级 center
+- [x] recent-files: 应该打开一个二级 ceneter
+- [x] change file-type: 打开二级 center
