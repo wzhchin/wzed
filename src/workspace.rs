@@ -431,7 +431,7 @@ impl LiteWorkspace {
         Ok(())
     }
 
-    fn save_active_tab_as(&mut self, path: PathBuf, cx: &mut Context<Self>) -> Result<()> {
+    pub(crate) fn save_active_tab_as(&mut self, path: PathBuf, cx: &mut Context<Self>) -> Result<()> {
         let tab = &mut self.tabs[self.active];
         let content = tab.editor.read(cx).text(cx);
         std::fs::write(&path, &content)

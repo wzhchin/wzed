@@ -96,7 +96,14 @@ fn main() {
     }
 
     if let Some(ref command) = command_arg {
-        let qualified = friendly_name_to_qualified(command);
+        let qualified = if command.starts_with("set-text:")
+            || command.starts_with("save-as:")
+            || command.starts_with("switch-tab:")
+        {
+            command.clone()
+        } else {
+            friendly_name_to_qualified(command)
+        };
         if try_send_command_to_existing_instance(&qualified) {
             return;
         }
@@ -189,8 +196,87 @@ fn main() {
                             }
                         }
                         IpcMessage::ExecuteCommand(command) => {
-                            if let Ok(action) = cx.build_action(&command, None) {
-                                window.dispatch_action(action, cx);
+                            match command.as_str() {
+                                "lite_editor::NewFile" => {
+                                    _workspace.handle_new(&NewFile, window, cx);
+                                }
+                                "lite_editor::OpenFile" => {
+                                    _workspace.handle_open(&OpenFile, window, cx);
+                                }
+                                "lite_editor::SaveFile" => {
+                                    _workspace.handle_save(&SaveFile, window, cx);
+                                }
+                                "lite_editor::SaveAll" => {
+                                    _workspace.handle_save_all(&SaveAll, window, cx);
+                                }
+                                "lite_editor::CloseTab" => {
+                                    _workspace.handle_close_tab(&CloseTab, window, cx);
+                                }
+                                "lite_editor::ToggleFind" => {
+                                    _workspace.handle_toggle_find(&ToggleFind, window, cx);
+                                }
+                                "lite_editor::FindNext" => {
+                                    _workspace.handle_find_next(&FindNext, window, cx);
+                                }
+                                "lite_editor::FindPrevious" => {
+                                    _workspace.handle_find_previous(&FindPrevious, window, cx);
+                                }
+                                "lite_editor::ToggleReplace" => {
+                                    _workspace.handle_toggle_replace(&ToggleReplace, window, cx);
+                                }
+                                "lite_editor::ReplaceNext" => {
+                                    _workspace.handle_replace_next(&ReplaceNext, window, cx);
+                                }
+                                "lite_editor::ReplaceAll" => {
+                                    _workspace.handle_replace_all(&ReplaceAll, window, cx);
+                                }
+                                "lite_editor::ToggleRegex" => {
+                                    _workspace.handle_toggle_regex(&ToggleRegex, window, cx);
+                                }
+                                "lite_editor::ToggleToolbar" => {
+                                    _workspace.handle_toggle_toolbar(&ToggleToolbar, window, cx);
+                                }
+                                "lite_editor::MoveToGroup" => {
+                                    _workspace.handle_move_to_group(&MoveToGroup, window, cx);
+                                }
+                                "lite_editor::ToggleCommandCenter" => {
+                                    _workspace.handle_toggle_command_center(
+                                        &ToggleCommandCenter, window, cx,
+                                    );
+                                }
+                                "lite_editor::ReloadWithEncoding" => {
+                                    _workspace.handle_reload_encoding(
+                                        &ReloadWithEncoding, window, cx,
+                                    );
+                                }
+                                "lite_editor::CompareFiles" => {
+                                    _workspace.handle_compare_files(&CompareFiles, window, cx);
+                                }
+                                "lite_editor::SearchAllTabs" => {
+                                    _workspace.handle_search_all_tabs(&SearchAllTabs, window, cx);
+                                }
+                                other => {
+                                    eprintln!("[IPC] unknown command: {other}");
+                                }
+                            }
+                        }
+                        IpcMessage::SetText(content) => {
+                            let tab = &_workspace.tabs[_workspace.active];
+                            tab.editor.update(cx, |editor, cx| {
+                                editor.set_text(content.as_str(), window, cx);
+                            });
+                            _workspace.save_session(cx);
+                        }
+                        IpcMessage::SaveAs(path) => {
+                            if let Err(err) = _workspace.save_active_tab_as(path, cx) {
+                                eprintln!("save-as failed: {err:#}");
+                            }
+                        }
+                        IpcMessage::SwitchTab(index) => {
+                            if index < _workspace.tabs.len() {
+                                _workspace.active = index;
+                                _workspace.save_session(cx);
+                                cx.notify();
                             }
                         }
                     }
@@ -286,11 +372,18 @@ fn friendly_name_to_qualified(input: &str) -> String {
     if input.contains("::") {
         return input.to_string();
     }
+    let mut fallback: Option<&'static str> = None;
     for action_data in generate_list_of_all_registered_actions() {
         let display = command_center::format_action_name(action_data.name);
         if display.eq_ignore_ascii_case(input) {
-            return action_data.name.to_string();
+            if action_data.name.starts_with("lite_editor::") {
+                return action_data.name.to_string();
+            }
+            fallback = Some(action_data.name);
         }
+    }
+    if let Some(name) = fallback {
+        return name.to_string();
     }
     format!("lite_editor::{input}")
 }

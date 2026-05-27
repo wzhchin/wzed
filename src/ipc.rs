@@ -9,6 +9,9 @@ use crate::workspace::LiteWorkspace;
 pub(crate) enum IpcMessage {
     OpenFiles(Vec<PathBuf>),
     ExecuteCommand(String),
+    SetText(String),
+    SaveAs(PathBuf),
+    SwitchTab(usize),
 }
 
 pub(crate) struct SharedState {
@@ -43,6 +46,32 @@ impl OpenListener {
     pub(crate) fn sender(&self) -> std::sync::mpsc::Sender<IpcMessage> {
         self.0.sender.clone()
     }
+}
+
+fn parse_ipc_message(text: &str) -> Option<IpcMessage> {
+    if let Some(cmd) = text.strip_prefix("CMD:") {
+        return Some(IpcMessage::ExecuteCommand(cmd.to_string()));
+    }
+    if let Some(content) = text.strip_prefix("SET:") {
+        return Some(IpcMessage::SetText(content.to_string()));
+    }
+    if let Some(path) = text.strip_prefix("SAVEAS:") {
+        return Some(IpcMessage::SaveAs(PathBuf::from(path)));
+    }
+    if let Some(index) = text.strip_prefix("SWITCHTAB:") {
+        if let Ok(idx) = index.parse::<usize>() {
+            return Some(IpcMessage::SwitchTab(idx));
+        }
+    }
+    let paths: Vec<PathBuf> = text
+        .split('\n')
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .collect();
+    if !paths.is_empty() {
+        return Some(IpcMessage::OpenFiles(paths));
+    }
+    None
 }
 
 #[cfg(unix)]
@@ -86,7 +115,18 @@ pub(crate) fn try_send_command_to_existing_instance(command: &str) -> bool {
         return false;
     }
 
-    let msg = format!("CMD:{command}");
+    let msg = if command.starts_with("set-text:") {
+        let content = command.strip_prefix("set-text:").unwrap_or("");
+        format!("SET:{content}")
+    } else if command.starts_with("save-as:") {
+        let path = command.strip_prefix("save-as:").unwrap_or("");
+        format!("SAVEAS:{path}")
+    } else if command.starts_with("switch-tab:") {
+        let index = command.strip_prefix("switch-tab:").unwrap_or("0");
+        format!("SWITCHTAB:{index}")
+    } else {
+        format!("CMD:{command}")
+    };
     sock.send(msg.as_bytes()).is_ok()
 }
 
@@ -114,17 +154,8 @@ pub(crate) fn listen_for_instances(sender: std::sync::mpsc::Sender<IpcMessage>) 
         loop {
             if let Ok(len) = listener.recv(&mut buf) {
                 let text = String::from_utf8_lossy(&buf[..len]);
-                if let Some(cmd) = text.strip_prefix("CMD:") {
-                    let _ = sender.send(IpcMessage::ExecuteCommand(cmd.to_string()));
-                } else {
-                    let paths: Vec<PathBuf> = text
-                        .split('\n')
-                        .filter(|s| !s.is_empty())
-                        .map(PathBuf::from)
-                        .collect();
-                    if !paths.is_empty() {
-                        let _ = sender.send(IpcMessage::OpenFiles(paths));
-                    }
+                if let Some(message) = parse_ipc_message(&text) {
+                    let _ = sender.send(message);
                 }
             }
         }
@@ -184,7 +215,18 @@ pub(crate) fn try_send_command_to_existing_instance(command: &str) -> bool {
         Err(_) => return false,
     };
 
-    let msg = format!("CMD:{command}");
+    let msg = if command.starts_with("set-text:") {
+        let content = command.strip_prefix("set-text:").unwrap_or("");
+        format!("SET:{content}")
+    } else if command.starts_with("save-as:") {
+        let path = command.strip_prefix("save-as:").unwrap_or("");
+        format!("SAVEAS:{path}")
+    } else if command.starts_with("switch-tab:") {
+        let index = command.strip_prefix("switch-tab:").unwrap_or("0");
+        format!("SWITCHTAB:{index}")
+    } else {
+        format!("CMD:{command}")
+    };
     stream.write_all(msg.as_bytes()).is_ok()
 }
 
@@ -212,17 +254,8 @@ pub(crate) fn listen_for_instances(sender: std::sync::mpsc::Sender<IpcMessage>) 
             if let Ok((mut stream, _)) = listener.accept() {
                 if let Ok(len) = stream.read(&mut buf) {
                     let text = String::from_utf8_lossy(&buf[..len]);
-                    if let Some(cmd) = text.strip_prefix("CMD:") {
-                        let _ = sender.send(IpcMessage::ExecuteCommand(cmd.to_string()));
-                    } else {
-                        let paths: Vec<PathBuf> = text
-                            .split('\n')
-                            .filter(|s| !s.is_empty())
-                            .map(PathBuf::from)
-                            .collect();
-                        if !paths.is_empty() {
-                            let _ = sender.send(IpcMessage::OpenFiles(paths));
-                        }
+                    if let Some(message) = parse_ipc_message(&text) {
+                        let _ = sender.send(message);
                     }
                 }
             }
