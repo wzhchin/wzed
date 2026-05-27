@@ -7,7 +7,7 @@ mod encoding;
 mod file_watcher;
 mod recent_files;
 mod tab;
-mod toolbar;
+mod topbar;
 mod workspace;
 
 use std::path::PathBuf;
@@ -16,11 +16,11 @@ use std::sync::Arc;
 use gpui::*;
 use theme::ActiveTheme;
 use language::{LanguageRegistry, LoadedLanguage};
-use settings::{KeymapFile, DEFAULT_KEYMAP_PATH};
+use settings::{KeymapFile, KeymapFileLoadResult, DEFAULT_KEYMAP_PATH};
 use app_theme::WzedThemeSettings;
 use workspace::LiteWorkspace;
 
-use ipc::{listen_for_instances, try_send_to_existing_instance, OpenListener};
+use ipc::{listen_for_instances, try_send_to_existing_instance, try_send_command_to_existing_instance, IpcMessage, OpenListener};
 
 actions!(
     lite_editor,
@@ -67,17 +67,48 @@ actions!(
 );
 
 fn main() {
-    let file_args: Vec<PathBuf> = std::env::args()
-        .skip(1)
-        .filter(|arg| !arg.starts_with('-'))
-        .map(PathBuf::from)
-        .collect();
+    let args: Vec<String> = std::env::args().collect();
+    let mut file_args: Vec<PathBuf> = Vec::new();
+    let mut command_arg: Option<String> = None;
+    let mut list_commands = false;
+
+    let mut iter = args.iter().skip(1).peekable();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--command" | "-c" => {
+                command_arg = iter.next().cloned();
+            }
+            "--list-commands" => {
+                list_commands = true;
+            }
+            s if !s.starts_with('-') => {
+                file_args.push(PathBuf::from(s));
+            }
+            _ => {
+                eprintln!("unknown argument: {arg}");
+            }
+        }
+    }
+
+    if list_commands {
+        list_all_commands();
+        return;
+    }
+
+    if let Some(ref command) = command_arg {
+        let qualified = friendly_name_to_qualified(command);
+        if try_send_command_to_existing_instance(&qualified) {
+            return;
+        }
+        eprintln!("no running wzed instance found");
+        std::process::exit(1);
+    }
 
     if !file_args.is_empty() && try_send_to_existing_instance(&file_args) {
         return;
     }
 
-    let (ipc_sender, ipc_receiver) = std::sync::mpsc::channel::<Vec<PathBuf>>();
+    let (ipc_sender, ipc_receiver) = std::sync::mpsc::channel::<IpcMessage>();
 
     let app =
         Application::with_platform(gpui_linux::current_platform(false)).with_assets(assets::Assets);
@@ -106,6 +137,22 @@ fn main() {
             KeyBinding::new("alt-x", ToggleCommandCenter, Some("LiteWorkspace")),
         ]);
 
+        let user_keymap_path = workspace::config_dir().join("keymap.json");
+        if let Ok(content) = std::fs::read_to_string(&user_keymap_path) {
+            match KeymapFile::load(&content, cx) {
+                KeymapFileLoadResult::Success { key_bindings } => {
+                    cx.bind_keys(key_bindings);
+                }
+                KeymapFileLoadResult::SomeFailedToLoad { key_bindings, error_message } => {
+                    eprintln!("user keymap partially loaded: {error_message}");
+                    cx.bind_keys(key_bindings);
+                }
+                KeymapFileLoadResult::JsonParseFailure { error } => {
+                    eprintln!("user keymap parse error: {error:#}");
+                }
+            }
+        }
+
         let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
         register_languages(&languages);
         languages.set_theme(cx.theme().clone());
@@ -126,16 +173,25 @@ fn main() {
         cx.spawn(async move |cx| {
             loop {
                 cx.background_executor().timer(std::time::Duration::from_millis(200)).await;
-                let Ok(paths) = ipc_receiver.try_recv() else {
+                let Ok(message) = ipc_receiver.try_recv() else {
                     continue;
                 };
-                let Some(handle) = shared_state.workspace_handle.lock().unwrap().clone() else {
+                let Some(handle) = *shared_state.workspace_handle.lock().unwrap() else {
                     continue;
                 };
-                handle.update(cx, |workspace, window, cx| {
-                    for path in &paths {
-                        if path.exists() {
-                            workspace.open_file_path(path.clone(), window, cx).ok();
+                handle.update(cx, |_workspace, window, cx| {
+                    match message {
+                        IpcMessage::OpenFiles(paths) => {
+                            for path in &paths {
+                                if path.exists() {
+                                    _workspace.open_file_path(path.clone(), window, cx).ok();
+                                }
+                            }
+                        }
+                        IpcMessage::ExecuteCommand(command) => {
+                            if let Ok(action) = cx.build_action(&command, None) {
+                                window.dispatch_action(action, cx);
+                            }
                         }
                     }
                 }).ok();
@@ -210,6 +266,33 @@ fn main() {
         })
         .detach();
     });
+}
+
+fn list_all_commands() {
+    let mut entries: Vec<(String, &'static str)> = Vec::new();
+    for action_data in generate_list_of_all_registered_actions() {
+        if action_data.name.starts_with("lite_editor::") {
+            let display = command_center::format_action_name(action_data.name);
+            entries.push((display, action_data.name));
+        }
+    }
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    for (display, qualified) in &entries {
+        println!("{:<40} {}", display, qualified);
+    }
+}
+
+fn friendly_name_to_qualified(input: &str) -> String {
+    if input.contains("::") {
+        return input.to_string();
+    }
+    for action_data in generate_list_of_all_registered_actions() {
+        let display = command_center::format_action_name(action_data.name);
+        if display.eq_ignore_ascii_case(input) {
+            return action_data.name.to_string();
+        }
+    }
+    format!("lite_editor::{input}")
 }
 
 fn register_languages(languages: &Arc<LanguageRegistry>) {

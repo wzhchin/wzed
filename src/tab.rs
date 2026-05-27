@@ -212,7 +212,7 @@ pub(crate) fn render_tab_list(
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |workspace, _event, _window, cx| {
-                    let is_pinned = workspace.tabs.get(idx).map_or(false, |t| t.pinned);
+                    let is_pinned = workspace.tabs.get(idx).is_some_and(|t| t.pinned);
                     workspace.context_menu_tab = Some(idx);
                     workspace.show_tab_context_menu = true;
                     workspace.tab_context_menu_is_pinned = is_pinned;

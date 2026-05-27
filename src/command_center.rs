@@ -1,13 +1,7 @@
 use gpui::*;
 use gpui::prelude::FluentBuilder as _;
 
-use crate::encoding;
 use crate::workspace::LiteWorkspace;
-use crate::{
-    CloseTab, CompareFiles, FindNext, FindPrevious, MoveToGroup, NewFile, OpenFile,
-    ReplaceAll, ReplaceNext, SaveAll, SaveFile, SearchAllTabs, ToggleCommandCenter,
-    ToggleFind, ToggleRegex, ToggleReplace, ToggleToolbar,
-};
 
 #[derive(Clone)]
 pub(crate) enum CommandSubmenu {
@@ -17,10 +11,66 @@ pub(crate) enum CommandSubmenu {
     RecentFiles,
 }
 
+#[derive(Clone)]
+pub(crate) struct CommandEntry {
+    pub action_name: &'static str,
+    pub display_name: String,
+    pub submenu_kind: Option<CommandSubmenu>,
+}
+
+pub(crate) fn format_action_name(name: &str) -> String {
+    let unqualified = name.rsplit("::").next().unwrap_or(name);
+    let mut result = String::new();
+    for (i, ch) in unqualified.chars().enumerate() {
+        if ch.is_uppercase() && i > 0 {
+            result.push('-');
+        }
+        result.push(ch.to_ascii_lowercase());
+    }
+    result
+}
+
+pub(crate) fn collect_commands(cx: &App) -> Vec<CommandEntry> {
+    let mut commands: Vec<CommandEntry> = cx
+        .all_action_names()
+        .iter()
+        .filter(|name| name.starts_with("lite_editor::"))
+        .map(|name| CommandEntry {
+            action_name: name,
+            display_name: format_action_name(name),
+            submenu_kind: None,
+        })
+        .collect();
+
+    commands.push(CommandEntry {
+        action_name: "",
+        display_name: "switch-buffer".into(),
+        submenu_kind: Some(CommandSubmenu::SwitchBuffer),
+    });
+    commands.push(CommandEntry {
+        action_name: "",
+        display_name: "switch-encoding".into(),
+        submenu_kind: Some(CommandSubmenu::ChangeEncoding),
+    });
+    commands.push(CommandEntry {
+        action_name: "",
+        display_name: "change-file-type".into(),
+        submenu_kind: Some(CommandSubmenu::ChangeFileType),
+    });
+    commands.push(CommandEntry {
+        action_name: "",
+        display_name: "recent-files".into(),
+        submenu_kind: Some(CommandSubmenu::RecentFiles),
+    });
+
+    commands.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+    commands
+}
+
 impl LiteWorkspace {
     pub(crate) fn handle_toggle_command_center(
         &mut self,
-        _action: &ToggleCommandCenter,
+        _action: &crate::ToggleCommandCenter,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -34,59 +84,26 @@ impl LiteWorkspace {
         cx.notify();
     }
 
-    pub(crate) fn execute_command(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
-        match name {
-            "Switch Buffer" => {
-                self.command_submenu = Some(CommandSubmenu::SwitchBuffer);
-                self.command_center_query.clear();
-                self.command_center_selected = 0;
-                cx.notify();
-                return;
-            }
-            "Switch Encoding" => {
-                self.command_submenu = Some(CommandSubmenu::ChangeEncoding);
-                self.command_center_query.clear();
-                self.command_center_selected = 0;
-                cx.notify();
-                return;
-            }
-            "Change File Type" => {
-                self.command_submenu = Some(CommandSubmenu::ChangeFileType);
-                self.command_center_query.clear();
-                self.command_center_selected = 0;
-                cx.notify();
-                return;
-            }
-            "Recent Files" => {
-                self.command_submenu = Some(CommandSubmenu::RecentFiles);
-                self.command_center_query.clear();
-                self.command_center_selected = 0;
-                cx.notify();
-                return;
-            }
-            _ => {}
+    pub(crate) fn execute_command(
+        &mut self,
+        entry: &CommandEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(submenu) = &entry.submenu_kind {
+            self.command_submenu = Some(submenu.clone());
+            self.command_center_query.clear();
+            self.command_center_selected = 0;
+            cx.notify();
+            return;
         }
+
         self.show_command_center = false;
         self.command_center_query.clear();
         self.command_submenu = None;
-        match name {
-            "New File" => self.handle_new(&NewFile, window, cx),
-            "Open File" => self.handle_open(&OpenFile, window, cx),
-            "Save File" => self.handle_save(&SaveFile, window, cx),
-            "Save All" => self.handle_save_all(&SaveAll, window, cx),
-            "Close Tab" => self.handle_close_tab(&CloseTab, window, cx),
-            "Find" => self.handle_toggle_find(&ToggleFind, window, cx),
-            "Find Next" => self.handle_find_next(&FindNext, window, cx),
-            "Find Previous" => self.handle_find_previous(&FindPrevious, window, cx),
-            "Replace" => self.handle_toggle_replace(&ToggleReplace, window, cx),
-            "Replace Next" => self.handle_replace_next(&ReplaceNext, window, cx),
-            "Replace All" => self.handle_replace_all(&ReplaceAll, window, cx),
-            "Toggle Regex" => self.handle_toggle_regex(&ToggleRegex, window, cx),
-            "Search All Tabs" => self.handle_search_all_tabs(&SearchAllTabs, window, cx),
-            "Toggle Toolbar" => self.handle_toggle_toolbar(&ToggleToolbar, window, cx),
-            "Move to Group" => self.handle_move_to_group(&MoveToGroup, window, cx),
-            "Compare Files" => self.handle_compare_files(&CompareFiles, window, cx),
-            _ => {}
+
+        if let Ok(action) = cx.build_action(entry.action_name, None) {
+            window.dispatch_action(action, cx);
         }
     }
 
@@ -108,20 +125,17 @@ impl LiteWorkspace {
                 }
             }
             CommandSubmenu::ChangeEncoding => {
-                let encodings = encoding::SUPPORTED_ENCODINGS;
-                if let Some(&label) = encodings.get(index) {
-                    if let Some(enc) = encoding::encoding_from_label(label) {
-                        let tab = &self.tabs[self.active];
-                        if let Some(path) = tab.path.clone() {
-                            if let Ok(content) = encoding::read_file_as_encoding(&path, enc) {
-                                let tab = &mut self.tabs[self.active];
-                                tab.encoding = enc;
-                                tab.editor.update(cx, |editor, cx| {
-                                    editor.set_text(content.as_str(), window, cx);
-                                });
-                            }
-                        }
-                    }
+                let encodings = crate::encoding::SUPPORTED_ENCODINGS;
+                if let Some(&label) = encodings.get(index)
+                    && let Some(enc) = crate::encoding::encoding_from_label(label)
+                    && let Some(path) = self.tabs[self.active].path.clone()
+                    && let Ok(content) = crate::encoding::read_file_as_encoding(&path, enc)
+                {
+                    let tab = &mut self.tabs[self.active];
+                    tab.encoding = enc;
+                    tab.editor.update(cx, |editor, cx| {
+                        editor.set_text(content.as_str(), window, cx);
+                    });
                 }
                 cx.notify();
             }
@@ -134,6 +148,7 @@ impl LiteWorkspace {
                     let languages = self.languages.clone();
                     let buffer = {
                         let tab = &self.tabs[self.active];
+                        #[allow(clippy::map_clone)]
                         tab.editor.read(cx).buffer().read(cx).as_singleton().map(|b| b.clone())
                     };
                     if let Some(buffer) = buffer {
@@ -160,36 +175,16 @@ impl LiteWorkspace {
 
 pub(crate) fn render_command_center(
     this: &LiteWorkspace,
-    cx: &Context<LiteWorkspace>,
+    _window: &mut Window,
+    cx: &mut Context<LiteWorkspace>,
 ) -> impl IntoElement {
-    let main_commands = [
-        "New File",
-        "Open File",
-        "Recent Files",
-        "Save File",
-        "Save All",
-        "Close Tab",
-        "Switch Buffer",
-        "Find",
-        "Find Next",
-        "Find Previous",
-        "Replace",
-        "Replace Next",
-        "Replace All",
-        "Toggle Regex",
-        "Search All Tabs",
-        "Toggle Toolbar",
-        "Move to Group",
-        "Switch Encoding",
-        "Change File Type",
-        "Compare Files",
-    ];
+    let all_commands = collect_commands(cx);
     let submenu_items: Vec<String> = match &this.command_submenu {
         Some(CommandSubmenu::SwitchBuffer) => {
             this.tabs.iter().map(|t| t.title.to_string()).collect()
         }
         Some(CommandSubmenu::ChangeEncoding) => {
-            encoding::SUPPORTED_ENCODINGS.iter().map(|s| s.to_string()).collect()
+            crate::encoding::SUPPORTED_ENCODINGS.iter().map(|s| s.to_string()).collect()
         }
         Some(CommandSubmenu::ChangeFileType) => {
             ["Bash", "C", "C++", "CSS", "Diff", "Go", "JSON", "JSONC", "Markdown",
@@ -204,14 +199,21 @@ pub(crate) fn render_command_center(
         None => Vec::new(),
     };
     let submenu_title: Option<&str> = match &this.command_submenu {
-        Some(CommandSubmenu::SwitchBuffer) => Some("Switch Buffer"),
-        Some(CommandSubmenu::ChangeEncoding) => Some("Switch Encoding"),
-        Some(CommandSubmenu::ChangeFileType) => Some("Change File Type"),
-        Some(CommandSubmenu::RecentFiles) => Some("Recent Files"),
+        Some(CommandSubmenu::SwitchBuffer) => Some("switch-buffer"),
+        Some(CommandSubmenu::ChangeEncoding) => Some("switch-encoding"),
+        Some(CommandSubmenu::ChangeFileType) => Some("change-file-type"),
+        Some(CommandSubmenu::RecentFiles) => Some("recent-files"),
         None => None,
     };
     let submenu_clone = this.command_submenu.clone();
     let is_submenu = this.command_submenu.is_some();
+
+    let filtered_commands: Vec<CommandEntry> = if is_submenu {
+        Vec::new()
+    } else {
+        all_commands
+    };
+
     let filtered: Vec<(usize, String)> = if is_submenu {
         submenu_items
             .iter()
@@ -227,25 +229,22 @@ pub(crate) fn render_command_center(
             .map(|(i, s)| (i, s.clone()))
             .collect()
     } else {
-        main_commands
+        filtered_commands
             .iter()
             .enumerate()
             .filter(|(_, cmd)| {
                 if this.command_center_query.is_empty() {
                     true
                 } else {
-                    cmd.to_lowercase()
+                    cmd.display_name
+                        .to_lowercase()
                         .contains(&this.command_center_query.to_lowercase())
                 }
             })
-            .map(|(i, s)| (i, s.to_string()))
+            .map(|(i, cmd)| (i, cmd.display_name.clone()))
             .collect()
     };
     let selected = this.command_center_selected.min(filtered.len().saturating_sub(1));
-    let selected_cmd = filtered
-        .get(selected)
-        .map(|(_, c)| c.clone())
-        .unwrap_or_default();
 
     div()
         .id("command-center-overlay")
@@ -316,11 +315,22 @@ pub(crate) fn render_command_center(
                                         );
                                     }
                                 } else {
-                                    this.execute_command(
-                                        &selected_cmd,
-                                        window,
-                                        cx,
-                                    );
+                                    let all_cmds = collect_commands(cx);
+                                    let visible: Vec<&CommandEntry> = all_cmds
+                                        .iter()
+                                        .filter(|cmd| {
+                                            if this.command_center_query.is_empty() {
+                                                true
+                                            } else {
+                                                cmd.display_name.to_lowercase().contains(
+                                                    &this.command_center_query.to_lowercase(),
+                                                )
+                                            }
+                                        })
+                                        .collect();
+                                    if let Some(entry) = visible.get(this.command_center_selected) {
+                                        this.execute_command(entry, window, cx);
+                                    }
                                 }
                             }
                             "backspace" => {
@@ -330,15 +340,11 @@ pub(crate) fn render_command_center(
                             }
                             _ => {
                                 if let Some(ch) = event.keystroke.key.chars().next()
+                                    && (ch.is_alphanumeric() || ch == ' ' || ch == '-')
                                 {
-                                    if ch.is_alphanumeric()
-                                        || ch == ' '
-                                        || ch == '-'
-                                    {
-                                        this.command_center_query.push(ch);
-                                        this.command_center_selected = 0;
-                                        cx.notify();
-                                    }
+                                    this.command_center_query.push(ch);
+                                    this.command_center_selected = 0;
+                                    cx.notify();
                                 }
                             }
                         }
@@ -416,7 +422,11 @@ pub(crate) fn render_command_center(
                                                 if let Some(ref sub) = sub {
                                                     this.execute_submenu_item(sub, click_idx, window, cx);
                                                 } else {
-                                                    this.execute_command(&cmd_text, window, cx);
+                                                    let all_cmds = collect_commands(cx);
+                                                    let entry = all_cmds.iter().find(|cmd| cmd.display_name == cmd_text);
+                                                    if let Some(entry) = entry {
+                                                        this.execute_command(entry, window, cx);
+                                                    }
                                                 }
                                             },
                                         )

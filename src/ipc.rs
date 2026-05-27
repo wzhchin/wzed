@@ -6,8 +6,13 @@ use gpui::*;
 
 use crate::workspace::LiteWorkspace;
 
+pub(crate) enum IpcMessage {
+    OpenFiles(Vec<PathBuf>),
+    ExecuteCommand(String),
+}
+
 pub(crate) struct SharedState {
-    pub sender: std::sync::mpsc::Sender<Vec<PathBuf>>,
+    pub sender: std::sync::mpsc::Sender<IpcMessage>,
     pub workspace_handle: std::sync::Mutex<Option<WindowHandle<LiteWorkspace>>>,
 }
 
@@ -16,7 +21,7 @@ pub(crate) struct OpenListener(Arc<SharedState>);
 impl Global for OpenListener {}
 
 impl OpenListener {
-    pub(crate) fn new(sender: std::sync::mpsc::Sender<Vec<PathBuf>>) -> Self {
+    pub(crate) fn new(sender: std::sync::mpsc::Sender<IpcMessage>) -> Self {
         Self(Arc::new(SharedState {
             sender,
             workspace_handle: std::sync::Mutex::new(None),
@@ -32,10 +37,10 @@ impl OpenListener {
     }
 
     pub(crate) fn workspace_handle(&self) -> Option<WindowHandle<LiteWorkspace>> {
-        self.0.workspace_handle.lock().unwrap().clone()
+        *self.0.workspace_handle.lock().unwrap()
     }
 
-    pub(crate) fn sender(&self) -> std::sync::mpsc::Sender<Vec<PathBuf>> {
+    pub(crate) fn sender(&self) -> std::sync::mpsc::Sender<IpcMessage> {
         self.0.sender.clone()
     }
 }
@@ -69,7 +74,24 @@ pub(crate) fn try_send_to_existing_instance(paths: &[PathBuf]) -> bool {
 }
 
 #[cfg(unix)]
-pub(crate) fn listen_for_instances(sender: std::sync::mpsc::Sender<Vec<PathBuf>>) -> Result<()> {
+pub(crate) fn try_send_command_to_existing_instance(command: &str) -> bool {
+    use std::os::unix::net::UnixDatagram;
+
+    let sock_path = ipc_socket_path();
+    let sock = match UnixDatagram::unbound() {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    if sock.connect(&sock_path).is_err() {
+        return false;
+    }
+
+    let msg = format!("CMD:{command}");
+    sock.send(msg.as_bytes()).is_ok()
+}
+
+#[cfg(unix)]
+pub(crate) fn listen_for_instances(sender: std::sync::mpsc::Sender<IpcMessage>) -> Result<()> {
     use std::os::unix::net::UnixDatagram;
     use std::thread;
 
@@ -78,27 +100,31 @@ pub(crate) fn listen_for_instances(sender: std::sync::mpsc::Sender<Vec<PathBuf>>
     if let Err(e) = UnixDatagram::unbound().and_then(|s| {
         s.connect(&sock_path)?;
         s.send(&[])
-    }) {
-        if e.kind() == std::io::ErrorKind::ConnectionRefused {
-            let _ = std::fs::remove_file(&sock_path);
-        }
+    })
+        && e.kind() == std::io::ErrorKind::ConnectionRefused
+    {
+        let _ = std::fs::remove_file(&sock_path);
     }
 
     let listener = UnixDatagram::bind(&sock_path)
         .with_context(|| format!("failed to bind IPC socket at {}", sock_path.display()))?;
 
     thread::spawn(move || {
-        let mut buf = [0u8; 4096];
+        let mut buf = [0u8; 8192];
         loop {
             if let Ok(len) = listener.recv(&mut buf) {
                 let text = String::from_utf8_lossy(&buf[..len]);
-                let paths: Vec<PathBuf> = text
-                    .split('\n')
-                    .filter(|s| !s.is_empty())
-                    .map(PathBuf::from)
-                    .collect();
-                if !paths.is_empty() {
-                    let _ = sender.send(paths);
+                if let Some(cmd) = text.strip_prefix("CMD:") {
+                    let _ = sender.send(IpcMessage::ExecuteCommand(cmd.to_string()));
+                } else {
+                    let paths: Vec<PathBuf> = text
+                        .split('\n')
+                        .filter(|s| !s.is_empty())
+                        .map(PathBuf::from)
+                        .collect();
+                    if !paths.is_empty() {
+                        let _ = sender.send(IpcMessage::OpenFiles(paths));
+                    }
                 }
             }
         }
@@ -137,7 +163,33 @@ pub(crate) fn try_send_to_existing_instance(paths: &[PathBuf]) -> bool {
 }
 
 #[cfg(windows)]
-pub(crate) fn listen_for_instances(sender: std::sync::mpsc::Sender<Vec<PathBuf>>) -> Result<()> {
+pub(crate) fn try_send_command_to_existing_instance(command: &str) -> bool {
+    use std::io::Write;
+    use std::net::TcpStream;
+
+    let lock_path = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("wzed.port");
+    let port_str = match std::fs::read_to_string(&lock_path) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let port: u16 = match port_str.trim().parse() {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+
+    let mut stream = match TcpStream::connect(format!("127.0.0.1:{port}")) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+
+    let msg = format!("CMD:{command}");
+    stream.write_all(msg.as_bytes()).is_ok()
+}
+
+#[cfg(windows)]
+pub(crate) fn listen_for_instances(sender: std::sync::mpsc::Sender<IpcMessage>) -> Result<()> {
     use std::io::Read as _;
     use std::net::TcpListener;
     use std::thread;
@@ -155,18 +207,22 @@ pub(crate) fn listen_for_instances(sender: std::sync::mpsc::Sender<Vec<PathBuf>>
     std::fs::write(&lock_path, port.to_string())?;
 
     thread::spawn(move || {
-        let mut buf = [0u8; 4096];
+        let mut buf = [0u8; 8192];
         loop {
             if let Ok((mut stream, _)) = listener.accept() {
                 if let Ok(len) = stream.read(&mut buf) {
                     let text = String::from_utf8_lossy(&buf[..len]);
-                    let paths: Vec<PathBuf> = text
-                        .split('\n')
-                        .filter(|s| !s.is_empty())
-                        .map(PathBuf::from)
-                        .collect();
-                    if !paths.is_empty() {
-                        let _ = sender.send(paths);
+                    if let Some(cmd) = text.strip_prefix("CMD:") {
+                        let _ = sender.send(IpcMessage::ExecuteCommand(cmd.to_string()));
+                    } else {
+                        let paths: Vec<PathBuf> = text
+                            .split('\n')
+                            .filter(|s| !s.is_empty())
+                            .map(PathBuf::from)
+                            .collect();
+                        if !paths.is_empty() {
+                            let _ = sender.send(IpcMessage::OpenFiles(paths));
+                        }
                     }
                 }
             }

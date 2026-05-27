@@ -16,15 +16,16 @@ use crate::encoding;
 use crate::diff_view;
 use crate::search::SearchState;
 use crate::command_center;
-use crate::toolbar;
+use crate::topbar;
 
 use crate::{
-    AutosaveTimer, CloseTab, CompareFiles, FindNext, FindPrevious, MoveToGroup, NewFile, OpenFile, ReplaceAll,
-    ReplaceNext, ReloadWithEncoding, SaveAll, SaveFile, SearchAllTabs, ToggleFind,
-    ToggleRegex, ToggleReplace, ToggleToolbar,
+    AutosaveTimer, CloseTab, CompareFiles, FindNext, FindPrevious, MoveToGroup,
+    NewFile, OpenFile, ReloadWithEncoding, ReplaceAll, ReplaceNext, SaveAll,
+    SaveFile, SearchAllTabs, ToggleFind, ToggleRegex,
+    ToggleReplace, ToggleToolbar,
 };
 
-fn config_dir() -> PathBuf {
+pub(crate) fn config_dir() -> PathBuf {
     dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("wzed")
 }
 
@@ -272,10 +273,10 @@ impl LiteWorkspace {
                     ));
                 }
             }
-            if was_pinned {
-                if let Some(last_tab) = self.tabs.last_mut() {
-                    last_tab.pinned = true;
-                }
+            if was_pinned
+                && let Some(last_tab) = self.tabs.last_mut()
+            {
+                last_tab.pinned = true;
             }
             if i == state.active {
                 self.active = self.tabs.len() - 1;
@@ -742,7 +743,7 @@ impl LiteWorkspace {
             .or_else(|| groups.first())
             .copied()
             .flatten();
-        tab.group = next.map(|s| SharedString::from(s));
+        tab.group = next.map(SharedString::from);
         cx.notify();
     }
 
@@ -833,7 +834,7 @@ impl Render for LiteWorkspace {
         let active_tab = &self.tabs[self.active];
 
         self.last_scrolled_active = self.active;
-        let toolbar = self.show_toolbar.then(|| toolbar::render_toolbar(self, cx));
+        let toolbar = self.show_toolbar.then(|| topbar::render_toolbar(self, cx));
 
         let tab_infos: Vec<tab::TabInfo> = self
             .tabs
@@ -1019,7 +1020,7 @@ impl Render for LiteWorkspace {
                     ),
             );
 
-        let search_bar = crate::search::render_search_bar(self, cx);
+        let search_bar = crate::search::render_search_bar(self, cx).map(|el| el.into_any_element());
         let multi_tab_results = crate::search::render_multi_tab_results(self, cx);
 
         div()
@@ -1087,7 +1088,7 @@ impl Render for LiteWorkspace {
             .on_action(cx.listener(Self::handle_compare_files))
             .on_action(cx.listener(Self::handle_toggle_command_center))
             .when(self.show_command_center, |el| {
-                el.child(command_center::render_command_center(self, cx))
+                el.child(command_center::render_command_center(self, _window, cx))
             })
             .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
                 for path in paths.paths() {
