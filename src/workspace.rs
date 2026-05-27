@@ -42,6 +42,7 @@ struct SessionState {
 struct SessionTab {
     path: Option<String>,
     unsaved_content: Option<String>,
+    pinned: bool,
 }
 
 fn save_session(workspace: &LiteWorkspace, cx: &App) {
@@ -63,6 +64,7 @@ fn save_session(workspace: &LiteWorkspace, cx: &App) {
             SessionTab {
                 path: tab.path.as_ref().map(|p| p.to_string_lossy().into_owned()),
                 unsaved_content,
+                pinned: tab.pinned,
             }
         })
         .collect();
@@ -114,6 +116,9 @@ pub(crate) struct LiteWorkspace {
     pub(crate) command_center_selected: usize,
     pub(crate) command_submenu: Option<command_center::CommandSubmenu>,
     diff_state: Option<diff_view::DiffState>,
+    pub(crate) show_tab_context_menu: bool,
+    pub(crate) context_menu_tab: Option<usize>,
+    pub(crate) tab_context_menu_is_pinned: bool,
 }
 
 impl LiteWorkspace {
@@ -142,6 +147,9 @@ impl LiteWorkspace {
             command_center_selected: 0,
             command_submenu: None,
             diff_state: None,
+            show_tab_context_menu: false,
+            context_menu_tab: None,
+            tab_context_menu_is_pinned: false,
         };
 
         let query_editor = this.search.query_editor.clone();
@@ -224,6 +232,7 @@ impl LiteWorkspace {
         }
 
         for (i, tab) in state.tabs.into_iter().enumerate() {
+            let was_pinned = tab.pinned;
             match tab.path {
                 Some(path_str) => {
                     let path = PathBuf::from(&path_str);
@@ -263,6 +272,11 @@ impl LiteWorkspace {
                     ));
                 }
             }
+            if was_pinned {
+                if let Some(last_tab) = self.tabs.last_mut() {
+                    last_tab.pinned = true;
+                }
+            }
             if i == state.active {
                 self.active = self.tabs.len() - 1;
             }
@@ -289,6 +303,7 @@ impl LiteWorkspace {
             title,
             group: None,
             encoding: encoding_rs::UTF_8,
+            pinned: false,
         }
     }
 
@@ -325,6 +340,7 @@ impl LiteWorkspace {
             title,
             group: None,
             encoding: encoding_rs::UTF_8,
+            pinned: false,
         }
     }
 
@@ -389,6 +405,7 @@ impl LiteWorkspace {
             title,
             group: None,
             encoding: detected_encoding,
+            pinned: false,
         });
         self.active = self.tabs.len() - 1;
         self.recent_files.add(&path);
@@ -554,6 +571,7 @@ impl LiteWorkspace {
             title: "untitled".into(),
             group: None,
             encoding: encoding_rs::UTF_8,
+            pinned: false,
         });
         self.active = self.tabs.len() - 1;
         self.save_session(cx);
@@ -826,7 +844,11 @@ impl Render for LiteWorkspace {
                 title: tab.title.clone(),
                 is_active: index == self.active,
                 is_dirty: tab.is_dirty(cx),
+                is_pinned: tab.pinned,
                 group: tab.group.clone(),
+                file_extension: tab.path.as_ref().and_then(|p| {
+                    p.extension().map(|e| e.to_string_lossy().to_lowercase())
+                }),
             })
             .collect();
         let tab_list = tab::render_tab_list(
@@ -835,6 +857,10 @@ impl Render for LiteWorkspace {
             self.last_scrolled_active,
             cx,
         );
+
+        let show_tab_context_menu = self.show_tab_context_menu;
+        let context_menu_tab = self.context_menu_tab;
+        let tab_context_menu_is_pinned = self.tab_context_menu_is_pinned;
 
         let side_tabs = div()
             .id("side-tabs")
@@ -846,6 +872,88 @@ impl Render for LiteWorkspace {
             .border_r_1()
             .border_color(gpui::hsla(0.0, 0.0, 0.15, 1.0))
             .child(tab_list)
+            .when(show_tab_context_menu, |el| {
+                el.child(
+                    div()
+                        .absolute()
+                        .left(px(10.0))
+                        .top(px(100.0))
+                        .bg(gpui::hsla(0.0, 0.0, 0.15, 1.0))
+                        .border_1()
+                        .border_color(gpui::hsla(0.0, 0.0, 0.25, 1.0))
+                        .rounded(px(6.0))
+                        .shadow(vec![gpui::BoxShadow {
+                            color: gpui::hsla(0.0, 0.0, 0.0, 0.5),
+                            offset: point(px(0.0), px(4.0)),
+                            blur_radius: px(12.0),
+                            spread_radius: px(0.0),
+                        }])
+                        .py(px(4.0))
+                        .min_w(px(140.0))
+                        .child(
+                            div()
+                                .id("ctx-pin")
+                                .flex()
+                                .items_center()
+                                .px(px(10.0))
+                                .py(px(6.0))
+                                .cursor_pointer()
+                                .text_size(px(13.0))
+                                .text_color(gpui::hsla(0.0, 0.0, 0.8, 1.0))
+                                .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.22, 1.0)))
+                                .child(if tab_context_menu_is_pinned {
+                                    "Unpin Tab"
+                                } else {
+                                    "Pin Tab"
+                                })
+                                .on_click(cx.listener(move |workspace, _, _window, cx| {
+                                    let Some(tab_idx) = context_menu_tab else {
+                                        return;
+                                    };
+                                    let Some(tab) = workspace.tabs.get_mut(tab_idx) else {
+                                        return;
+                                    };
+                                    tab.pinned = !tab.pinned;
+                                    workspace.show_tab_context_menu = false;
+                                    workspace.save_session(cx);
+                                    cx.notify();
+                                })),
+                        )
+                        .child(
+                            div()
+                                .id("ctx-close")
+                                .flex()
+                                .items_center()
+                                .px(px(10.0))
+                                .py(px(6.0))
+                                .cursor_pointer()
+                                .text_size(px(13.0))
+                                .text_color(gpui::hsla(0.0, 0.0, 0.8, 1.0))
+                                .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.22, 1.0)))
+                                .child("Close Tab")
+                                .on_click(cx.listener(move |workspace, _, _window, cx| {
+                                    let Some(tab_idx) = context_menu_tab else {
+                                        return;
+                                    };
+                                    if workspace.tabs.len() <= 1 {
+                                        return;
+                                    }
+                                    workspace.tabs.remove(tab_idx);
+                                    if workspace.tabs.is_empty() {
+                                        return;
+                                    }
+                                    if workspace.active >= workspace.tabs.len() {
+                                        workspace.active = workspace.tabs.len() - 1;
+                                    } else if tab_idx <= workspace.active && workspace.active > 0 {
+                                        workspace.active -= 1;
+                                    }
+                                    workspace.show_tab_context_menu = false;
+                                    workspace.save_session(cx);
+                                    cx.notify();
+                                })),
+                        ),
+                )
+            })
             .child(
                 div()
                     .id("new-tab-btn")
@@ -920,6 +1028,12 @@ impl Render for LiteWorkspace {
             .flex_col()
             .size_full()
             .bg(gpui::hsla(0.0, 0.0, 0.1, 1.0))
+            .capture_any_mouse_down(cx.listener(|workspace, _event, _window, cx| {
+                if workspace.show_tab_context_menu {
+                    workspace.show_tab_context_menu = false;
+                    cx.notify();
+                }
+            }))
             .children(toolbar)
             .child(
                 div()

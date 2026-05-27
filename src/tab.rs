@@ -10,6 +10,7 @@ pub(crate) struct Tab {
     pub title: SharedString,
     pub group: Option<SharedString>,
     pub encoding: &'static encoding_rs::Encoding,
+    pub pinned: bool,
 }
 
 impl Tab {
@@ -23,7 +24,27 @@ pub(crate) struct TabInfo {
     pub title: SharedString,
     pub is_active: bool,
     pub is_dirty: bool,
+    pub is_pinned: bool,
     pub group: Option<SharedString>,
+    pub file_extension: Option<String>,
+}
+
+fn icon_path_for_extension(ext: Option<&str>) -> &'static str {
+    match ext {
+        Some("rs") => "icons/file_rust.svg",
+        Some("md") | Some("mdx") => "icons/file_markdown.svg",
+        Some("toml") => "icons/file_toml.svg",
+        Some("js") | Some("ts") | Some("jsx") | Some("tsx") | Some("py") | Some("go")
+        | Some("c") | Some("h") | Some("cpp") | Some("java") | Some("rb") => {
+            "icons/file_code.svg"
+        }
+        Some("json") | Some("yaml") | Some("yml") | Some("xml") | Some("ini") | Some("cfg") => {
+            "icons/file_generic.svg"
+        }
+        Some("txt") | Some("log") => "icons/file_text_outlined.svg",
+        Some("diff") | Some("patch") => "icons/file_diff.svg",
+        _ => "icons/file.svg",
+    }
 }
 
 #[derive(Clone)]
@@ -88,11 +109,19 @@ pub(crate) fn render_tab_list(
         let idx = tab.index;
         let active = tab.is_active;
         let dirty = tab.is_dirty;
+        let pinned = tab.is_pinned;
         let title = tab.title.clone();
+        let icon_path = icon_path_for_extension(tab.file_extension.as_deref());
 
         let dragged = DraggedTab {
             index: idx,
             title: title.clone(),
+        };
+
+        let icon_color = if active {
+            gpui::hsla(0.0, 0.0, 0.7, 1.0)
+        } else {
+            gpui::hsla(0.0, 0.0, 0.45, 1.0)
         };
 
         let mut tab_el = div()
@@ -104,11 +133,20 @@ pub(crate) fn render_tab_list(
             .w_full()
             .cursor_pointer()
             .child(
+                svg()
+                    .path(icon_path)
+                    .size(px(14.0))
+                    .text_color(icon_color)
+                    .mr(px(6.0))
+                    .flex_shrink_0(),
+            )
+            .child(
                 div()
                     .flex()
                     .flex_row()
                     .items_center()
                     .flex_1()
+                    .overflow_hidden()
                     .child(
                         div()
                             .text_size(px(13.0))
@@ -130,10 +168,57 @@ pub(crate) fn render_tab_list(
                         )
                     }),
             )
+            .child(
+                div()
+                    .id(ElementId::Name(format!("tab-close-{idx}").into()))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(16.0))
+                    .rounded(px(3.0))
+                    .text_color(gpui::hsla(0.0, 0.0, 0.5, 1.0))
+                    .hover(|s| {
+                        s.bg(gpui::hsla(0.0, 0.0, 0.25, 1.0))
+                            .text_color(gpui::hsla(0.0, 0.0, 0.9, 1.0))
+                    })
+                    .child(
+                        svg()
+                            .path("icons/close.svg")
+                            .size(px(12.0))
+                            .flex_shrink_0(),
+                    )
+                    .on_click(cx.listener(move |workspace, _event, _window, cx| {
+                        if workspace.tabs.len() <= 1 {
+                            return;
+                        }
+                        let closed_idx = idx;
+                        workspace.tabs.remove(closed_idx);
+                        if workspace.tabs.is_empty() {
+                            return;
+                        }
+                        if workspace.active >= workspace.tabs.len() {
+                            workspace.active = workspace.tabs.len() - 1;
+                        } else if closed_idx <= workspace.active && workspace.active > 0 {
+                            workspace.active -= 1;
+                        }
+                        workspace.save_session(cx);
+                        cx.notify();
+                    })),
+            )
             .on_click(cx.listener(move |workspace, _, _window, cx| {
                 workspace.active = idx;
                 cx.notify();
             }))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |workspace, _event, _window, cx| {
+                    let is_pinned = workspace.tabs.get(idx).map_or(false, |t| t.pinned);
+                    workspace.context_menu_tab = Some(idx);
+                    workspace.show_tab_context_menu = true;
+                    workspace.tab_context_menu_is_pinned = is_pinned;
+                    cx.notify();
+                }),
+            )
             .on_drag(dragged, |drag: &DraggedTab, _position, _window, cx| {
                 cx.new(|_| drag.clone())
             })
@@ -158,7 +243,16 @@ pub(crate) fn render_tab_list(
             tab_el = tab_el
                 .bg(gpui::hsla(0.0, 0.0, 0.18, 1.0))
                 .border_l_2()
-                .border_color(gpui::hsla(220.0, 0.8, 0.6, 1.0));
+                .border_color(if pinned {
+                    gpui::hsla(40.0, 0.8, 0.55, 1.0)
+                } else {
+                    gpui::hsla(220.0, 0.8, 0.6, 1.0)
+                });
+        } else if pinned {
+            tab_el = tab_el
+                .bg(gpui::hsla(0.0, 0.0, 0.13, 1.0))
+                .border_l_2()
+                .border_color(gpui::hsla(40.0, 0.6, 0.4, 1.0));
         } else {
             tab_el = tab_el.hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.13, 1.0)));
         }

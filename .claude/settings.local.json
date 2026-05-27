@@ -9,7 +9,15 @@
       "Bash(grep -E '^\\(editor|multi_buffer|language|grammars|theme|settings|assets|fs|gpui|theme_settings\\)$')",
       "Bash(grep -iE 'editor|multi_buffer|language|grammar|theme|setting|asset|^fs$|gpui')",
       "Bash(rtk cargo *)",
-      "Bash(cargo run *)"
+      "Bash(cargo run *)",
+      "Bash(cargo check *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(rmi /home/chin/repos/wzed-ws/wzed/error.log)",
+      "Bash(cargo add *)",
+      "WebSearch",
+      "Bash(git rm *)",
+      "Bash"
     ],
     "additionalDirectories": [
       "/home/chin/repos/wzed-ws/zed"
