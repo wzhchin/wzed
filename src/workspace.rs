@@ -416,16 +416,33 @@ impl LiteWorkspace {
         Ok(())
     }
 
+    fn write_editor_to_file(
+        editor: &Entity<Editor>, path: &Path, cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let content = editor.read(cx).text(cx);
+        std::fs::write(path, &content)
+            .with_context(|| format!("failed to write file: {}", path.display()))?;
+        let buffer = editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .context("expected singleton buffer")?
+            .clone();
+        let version = buffer.read(cx).snapshot().text.version().clone();
+        buffer.update(cx, |buf, cx| {
+            buf.did_save(version, None, cx);
+        });
+        Ok(())
+    }
+
     fn save_active_tab(&mut self, cx: &mut Context<Self>) -> Result<()> {
         let tab = &self.tabs[self.active];
         let path = match &tab.path {
             Some(p) => p.clone(),
             None => bail!("no file path for this tab"),
         };
-
-        let content = tab.editor.read(cx).text(cx);
-        std::fs::write(&path, &content)
-            .with_context(|| format!("failed to write file: {}", path.display()))?;
+        Self::write_editor_to_file(&tab.editor, &path, cx)?;
         self.file_watcher.update_mtime(&path);
         self.save_session(cx);
         Ok(())
@@ -433,9 +450,7 @@ impl LiteWorkspace {
 
     pub(crate) fn save_active_tab_as(&mut self, path: PathBuf, cx: &mut Context<Self>) -> Result<()> {
         let tab = &mut self.tabs[self.active];
-        let content = tab.editor.read(cx).text(cx);
-        std::fs::write(&path, &content)
-            .with_context(|| format!("failed to write file: {}", path.display()))?;
+        Self::write_editor_to_file(&tab.editor, &path, cx)?;
         tab.path = Some(path.clone());
         tab.title = path
             .file_name()
@@ -518,12 +533,11 @@ impl LiteWorkspace {
         for i in 0..self.tabs.len() {
             let tab = &self.tabs[i];
             let Some(path) = tab.path.clone() else { continue };
-            let content = tab.editor.read(cx).text(cx);
-            if let Err(err) = std::fs::write(&path, &content) {
+            if let Err(err) = Self::write_editor_to_file(&tab.editor, &path, cx) {
                 eprintln!("failed to save {}: {err:#}", path.display());
-            } else {
-                self.file_watcher.update_mtime(&path);
+                continue;
             }
+            self.file_watcher.update_mtime(&path);
         }
         self.save_session(cx);
         cx.notify();
