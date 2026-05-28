@@ -188,21 +188,7 @@ pub(crate) fn render_tab_list(
                             .flex_shrink_0(),
                     )
                     .on_click(cx.listener(move |workspace, _event, _window, cx| {
-                        if workspace.tabs.len() <= 1 {
-                            return;
-                        }
-                        let closed_idx = idx;
-                        workspace.tabs.remove(closed_idx);
-                        if workspace.tabs.is_empty() {
-                            return;
-                        }
-                        if workspace.active >= workspace.tabs.len() {
-                            workspace.active = workspace.tabs.len() - 1;
-                        } else if closed_idx <= workspace.active && workspace.active > 0 {
-                            workspace.active -= 1;
-                        }
-                        workspace.save_session(cx);
-                        cx.notify();
+                        workspace.close_tab_at(idx, cx);
                     })),
             )
             .on_click(cx.listener(move |workspace, _, _window, cx| {

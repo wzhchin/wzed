@@ -48,7 +48,19 @@ impl OpenListener {
     }
 }
 
-fn parse_ipc_message(text: &str) -> Option<IpcMessage> {
+pub(crate) fn format_command_message(command: &str) -> String {
+    if let Some(content) = command.strip_prefix("set-text:") {
+        format!("SET:{content}")
+    } else if let Some(path) = command.strip_prefix("save-as:") {
+        format!("SAVEAS:{path}")
+    } else if let Some(index) = command.strip_prefix("switch-tab:") {
+        format!("SWITCHTAB:{index}")
+    } else {
+        format!("CMD:{command}")
+    }
+}
+
+pub(crate) fn parse_ipc_message(text: &str) -> Option<IpcMessage> {
     if let Some(cmd) = text.strip_prefix("CMD:") {
         return Some(IpcMessage::ExecuteCommand(cmd.to_string()));
     }
@@ -115,18 +127,7 @@ pub(crate) fn try_send_command_to_existing_instance(command: &str) -> bool {
         return false;
     }
 
-    let msg = if command.starts_with("set-text:") {
-        let content = command.strip_prefix("set-text:").unwrap_or("");
-        format!("SET:{content}")
-    } else if command.starts_with("save-as:") {
-        let path = command.strip_prefix("save-as:").unwrap_or("");
-        format!("SAVEAS:{path}")
-    } else if command.starts_with("switch-tab:") {
-        let index = command.strip_prefix("switch-tab:").unwrap_or("0");
-        format!("SWITCHTAB:{index}")
-    } else {
-        format!("CMD:{command}")
-    };
+    let msg = format_command_message(command);
     sock.send(msg.as_bytes()).is_ok()
 }
 
@@ -215,18 +216,7 @@ pub(crate) fn try_send_command_to_existing_instance(command: &str) -> bool {
         Err(_) => return false,
     };
 
-    let msg = if command.starts_with("set-text:") {
-        let content = command.strip_prefix("set-text:").unwrap_or("");
-        format!("SET:{content}")
-    } else if command.starts_with("save-as:") {
-        let path = command.strip_prefix("save-as:").unwrap_or("");
-        format!("SAVEAS:{path}")
-    } else if command.starts_with("switch-tab:") {
-        let index = command.strip_prefix("switch-tab:").unwrap_or("0");
-        format!("SWITCHTAB:{index}")
-    } else {
-        format!("CMD:{command}")
-    };
+    let msg = format_command_message(command);
     stream.write_all(msg.as_bytes()).is_ok()
 }
 

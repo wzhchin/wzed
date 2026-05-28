@@ -14,7 +14,7 @@ pub(crate) struct DiffLineSide {
     pub kind: DiffLineKind,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) enum DiffLineKind {
     Normal,
     Added,

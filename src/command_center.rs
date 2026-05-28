@@ -19,15 +19,7 @@ pub(crate) struct CommandEntry {
 }
 
 pub(crate) fn format_action_name(name: &str) -> String {
-    let unqualified = name.rsplit("::").next().unwrap_or(name);
-    let mut result = String::new();
-    for (i, ch) in unqualified.chars().enumerate() {
-        if ch.is_uppercase() && i > 0 {
-            result.push('-');
-        }
-        result.push(ch.to_ascii_lowercase());
-    }
-    result
+    crate::utils::format_action_name(name)
 }
 
 pub(crate) fn collect_commands(cx: &App) -> Vec<CommandEntry> {

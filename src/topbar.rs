@@ -59,10 +59,7 @@ fn render_recent_menu(
         .iter()
         .take(15)
         .map(|path| {
-            let name = path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "?".into());
+            let name = crate::utils::file_name_from_path(path);
             let dir = path
                 .parent()
                 .map(|p| p.display().to_string())

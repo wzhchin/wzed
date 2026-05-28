@@ -8,6 +8,7 @@ mod file_watcher;
 mod recent_files;
 mod tab;
 mod topbar;
+mod utils;
 mod workspace;
 
 use std::path::PathBuf;
@@ -130,6 +131,10 @@ fn main() {
         );
 
         cx.bind_keys(vec![
+            KeyBinding::new("ctrl-n", NewFile, Some("LiteWorkspace")),
+            KeyBinding::new("ctrl-o", OpenFile, Some("LiteWorkspace")),
+            KeyBinding::new("ctrl-s", SaveFile, Some("LiteWorkspace")),
+            KeyBinding::new("ctrl-w", CloseTab, Some("LiteWorkspace")),
             KeyBinding::new("ctrl-f", ToggleFind, Some("LiteWorkspace")),
             KeyBinding::new("ctrl-h", ToggleReplace, Some("LiteWorkspace")),
             KeyBinding::new("f3", FindNext, Some("LiteWorkspace")),
@@ -144,7 +149,7 @@ fn main() {
             KeyBinding::new("alt-x", ToggleCommandCenter, Some("LiteWorkspace")),
         ]);
 
-        let user_keymap_path = workspace::config_dir().join("keymap.json");
+        let user_keymap_path = utils::config_dir().join("keymap.json");
         if let Ok(content) = std::fs::read_to_string(&user_keymap_path) {
             match KeymapFile::load(&content, cx) {
                 KeymapFileLoadResult::Success { key_bindings } => {

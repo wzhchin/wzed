@@ -17,6 +17,7 @@ use crate::diff_view;
 use crate::search::SearchState;
 use crate::command_center;
 use crate::topbar;
+use crate::utils;
 
 use crate::{
     AutosaveTimer, CloseTab, CompareFiles, FindNext, FindPrevious, MoveToGroup,
@@ -25,12 +26,8 @@ use crate::{
     ToggleReplace, ToggleToolbar,
 };
 
-pub(crate) fn config_dir() -> PathBuf {
-    dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("wzed")
-}
-
 fn session_path() -> PathBuf {
-    config_dir().join("session.json")
+    utils::config_dir().join("session.json")
 }
 
 #[derive(Serialize, Deserialize)]
@@ -47,9 +44,8 @@ struct SessionTab {
 }
 
 fn save_session(workspace: &LiteWorkspace, cx: &App) {
-    let dir = config_dir();
-    if let Err(err) = std::fs::create_dir_all(&dir) {
-        eprintln!("failed to create config dir: {err:#}");
+    if let Err(err) = utils::ensure_config_dir() {
+        eprintln!("{err:#}");
         return;
     }
 
@@ -91,13 +87,6 @@ fn save_session(workspace: &LiteWorkspace, cx: &App) {
 pub(crate) fn save_session_from_outside(workspace: &LiteWorkspace, cx: &App) {
     workspace.save_dirty_snapshots(cx);
     save_session(workspace, cx);
-}
-
-fn chrono_like_timestamp() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    format!("{}", now.as_secs())
 }
 
 pub(crate) struct LiteWorkspace {
@@ -248,10 +237,7 @@ impl LiteWorkspace {
                             });
                         }
                     } else if let Some(content) = tab.unsaved_content {
-                        let title = path
-                            .file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_else(|| "untitled".into());
+                        let title = utils::file_name_from_path(&path);
                         self.tabs.push(Self::create_tab_from_content(
                             Some(path),
                             title.into(),
@@ -370,10 +356,7 @@ impl LiteWorkspace {
 
         let (content, detected_encoding) = encoding::read_file_with_detection(&path)
             .with_context(|| format!("failed to read file: {}", path.display()))?;
-        let title: SharedString = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned().into())
-            .unwrap_or("untitled".into());
+        let title: SharedString = utils::file_name_from_path(&path).into();
 
         let languages = self.languages.clone();
         let path_for_lang = path.clone();
@@ -452,10 +435,7 @@ impl LiteWorkspace {
         let tab = &mut self.tabs[self.active];
         Self::write_editor_to_file(&tab.editor, &path, cx)?;
         tab.path = Some(path.clone());
-        tab.title = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned().into())
-            .unwrap_or("untitled".into());
+        tab.title = utils::file_name_from_path(&path).into();
         self.recent_files.add(&path);
         self.recent_files.save_to_disk();
         self.file_watcher.update_mtime(&path);
@@ -544,7 +524,7 @@ impl LiteWorkspace {
     }
 
     fn save_dirty_snapshots(&self, cx: &App) {
-        let snapshots_dir = config_dir().join("snapshots");
+        let snapshots_dir = utils::config_dir().join("snapshots");
         if let Err(err) = std::fs::create_dir_all(&snapshots_dir) {
             eprintln!("failed to create snapshots dir: {err:#}");
             return;
@@ -556,7 +536,7 @@ impl LiteWorkspace {
             }
 
             let content = tab.editor.read(cx).text(cx);
-            let timestamp = chrono_like_timestamp();
+            let timestamp = utils::timestamp_secs();
             let snapshot_name = format!("tab-{i}-{timestamp}.txt");
             if let Err(err) = std::fs::write(snapshots_dir.join(&snapshot_name), &content) {
                 eprintln!("autosave snapshot failed: {err:#}");
@@ -599,12 +579,21 @@ impl LiteWorkspace {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.close_tab_at(self.active, cx);
+    }
+
+    pub(crate) fn close_tab_at(&mut self, index: usize, cx: &mut Context<Self>) {
         if self.tabs.len() <= 1 {
             return;
         }
-        self.tabs.remove(self.active);
+        self.tabs.remove(index);
+        if self.tabs.is_empty() {
+            return;
+        }
         if self.active >= self.tabs.len() {
             self.active = self.tabs.len() - 1;
+        } else if index <= self.active && self.active > 0 {
+            self.active -= 1;
         }
         self.save_session(cx);
         cx.notify();
@@ -825,10 +814,7 @@ impl LiteWorkspace {
                     return;
                 }
             };
-            let right_title: SharedString = right_path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned().into())
-                .unwrap_or("unknown".into());
+            let right_title: SharedString = utils::file_name_from_path(&right_path).into();
 
             let diff =
                 diff_view::compute_diff(&left_text, &right_text, left_title, right_title);
@@ -950,21 +936,8 @@ impl Render for LiteWorkspace {
                                     let Some(tab_idx) = context_menu_tab else {
                                         return;
                                     };
-                                    if workspace.tabs.len() <= 1 {
-                                        return;
-                                    }
-                                    workspace.tabs.remove(tab_idx);
-                                    if workspace.tabs.is_empty() {
-                                        return;
-                                    }
-                                    if workspace.active >= workspace.tabs.len() {
-                                        workspace.active = workspace.tabs.len() - 1;
-                                    } else if tab_idx <= workspace.active && workspace.active > 0 {
-                                        workspace.active -= 1;
-                                    }
                                     workspace.show_tab_context_menu = false;
-                                    workspace.save_session(cx);
-                                    cx.notify();
+                                    workspace.close_tab_at(tab_idx, cx);
                                 })),
                         ),
                 )
