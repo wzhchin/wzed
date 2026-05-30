@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, Result, bail};
 use editor::{Editor, EditorMode, MultiBuffer};
+use language::language_settings::SoftWrap;
 use gpui::{self, *};
 use gpui::ExternalPaths;
 use gpui::prelude::FluentBuilder as _;
@@ -284,6 +285,7 @@ impl LiteWorkspace {
         let buffer = cx.new(|cx| Buffer::local(content, cx));
         let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let editor = cx.new(|cx| Editor::new(EditorMode::full(), multibuffer, None, window, cx));
+        editor.update(cx, |e, cx| e.set_soft_wrap_mode(SoftWrap::EditorWidth, cx));
         Tab {
             editor,
             path,
@@ -321,6 +323,7 @@ impl LiteWorkspace {
         });
         let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let editor = cx.new(|cx| Editor::new(EditorMode::full(), multibuffer, None, window, cx));
+        editor.update(cx, |e, cx| e.set_soft_wrap_mode(SoftWrap::EditorWidth, cx));
         Tab {
             editor,
             path,
@@ -337,7 +340,9 @@ impl LiteWorkspace {
     ) -> Entity<Editor> {
         let buffer = cx.new(|cx| Buffer::local("", cx));
         let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        cx.new(|cx| Editor::new(EditorMode::full(), multibuffer, None, window, cx))
+        let editor = cx.new(|cx| Editor::new(EditorMode::full(), multibuffer, None, window, cx));
+        editor.update(cx, |e, cx| e.set_soft_wrap_mode(SoftWrap::EditorWidth, cx));
+        editor
     }
 
     pub(crate) fn open_file_path(
@@ -382,6 +387,7 @@ impl LiteWorkspace {
 
         let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let editor = cx.new(|cx| Editor::new(EditorMode::full(), multibuffer, None, window, cx));
+        editor.update(cx, |e, cx| e.set_soft_wrap_mode(SoftWrap::EditorWidth, cx));
 
         self.tabs.push(Tab {
             editor,
