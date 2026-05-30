@@ -17,7 +17,8 @@ use std::sync::Arc;
 use gpui::*;
 use theme::ActiveTheme;
 use language::{LanguageRegistry, LoadedLanguage};
-use settings::{KeymapFile, KeymapFileLoadResult, DEFAULT_KEYMAP_PATH};
+use editor::EditorSettings;
+use settings::{KeymapFile, KeymapFileLoadResult, Settings, DEFAULT_KEYMAP_PATH};
 use app_theme::WzedThemeSettings;
 use workspace::LiteWorkspace;
 
@@ -123,6 +124,12 @@ fn main() {
 
     app.run(move |cx: &mut App| {
         settings::init(cx);
+        {
+            let mut editor_settings = EditorSettings::get_global(cx).clone();
+            editor_settings.gutter.runnables = false;
+            editor_settings.gutter.folds = false;
+            EditorSettings::override_global(editor_settings, cx);
+        }
         theme::init(theme::LoadThemes::JustBase, cx);
         theme::set_theme_settings_provider(Box::new(WzedThemeSettings::new()), cx);
 
