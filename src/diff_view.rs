@@ -1,6 +1,7 @@
 use gpui::*;
-
 use similar::{ChangeTag, TextDiff};
+
+use crate::app_theme::colors;
 
 pub(crate) struct DiffState {
     pub left_title: SharedString,
@@ -132,14 +133,14 @@ pub(crate) fn render_diff_view(
         .enumerate()
         .map(|(i, (left, right))| {
             let left_bg = match left.kind {
-                DiffLineKind::Normal => gpui::hsla(0.0, 0.0, 0.0, 0.0),
-                DiffLineKind::Removed => gpui::hsla(0.0, 0.6, 0.15, 0.35),
-                DiffLineKind::Added => gpui::hsla(0.0, 0.0, 0.0, 0.0),
+                DiffLineKind::Normal => colors::TRANSPARENT,
+                DiffLineKind::Removed => colors::DIFF_REMOVED_BG,
+                DiffLineKind::Added => colors::TRANSPARENT,
             };
             let right_bg = match right.kind {
-                DiffLineKind::Normal => gpui::hsla(0.0, 0.0, 0.0, 0.0),
-                DiffLineKind::Added => gpui::hsla(120.0 / 360.0, 0.6, 0.2, 0.3),
-                DiffLineKind::Removed => gpui::hsla(0.0, 0.0, 0.0, 0.0),
+                DiffLineKind::Normal => colors::TRANSPARENT,
+                DiffLineKind::Added => colors::DIFF_ADDED_BG,
+                DiffLineKind::Removed => colors::TRANSPARENT,
             };
 
             let left_num = left
@@ -169,20 +170,20 @@ pub(crate) fn render_diff_view(
                                 .w(px(40.0))
                                 .px(px(4.0))
                                 .text_size(px(11.0))
-                                .text_color(gpui::hsla(0.0, 0.0, 0.35, 1.0))
+                                .text_color(colors::TEXT_MUTED)
                                 .child(left_num),
                         )
                         .child(
                             div()
                                 .flex_1()
                                 .text_size(px(12.0))
-                                .text_color(gpui::hsla(0.0, 0.0, 0.85, 1.0))
+                                .text_color(colors::TEXT_BRIGHT)
                                 .text_ellipsis()
                                 .overflow_hidden()
                                 .child(left_text),
                         ),
                 )
-                .child(div().w(px(1.0)).bg(gpui::hsla(0.0, 0.0, 0.2, 1.0)))
+                .child(div().w(px(1.0)).bg(colors::BG_HOVER))
                 .child(
                     div()
                         .flex_1()
@@ -194,14 +195,14 @@ pub(crate) fn render_diff_view(
                                 .w(px(40.0))
                                 .px(px(4.0))
                                 .text_size(px(11.0))
-                                .text_color(gpui::hsla(0.0, 0.0, 0.35, 1.0))
+                                .text_color(colors::TEXT_MUTED)
                                 .child(right_num),
                         )
                         .child(
                             div()
                                 .flex_1()
                                 .text_size(px(12.0))
-                                .text_color(gpui::hsla(0.0, 0.0, 0.85, 1.0))
+                                .text_color(colors::TEXT_BRIGHT)
                                 .text_ellipsis()
                                 .overflow_hidden()
                                 .child(right_text),
@@ -213,11 +214,24 @@ pub(crate) fn render_diff_view(
     let left_title = state.left_title.clone();
     let right_title = state.right_title.clone();
 
+    let mut added = 0usize;
+    let mut removed = 0usize;
+    for (left, right) in &state.lines {
+        match left.kind {
+            DiffLineKind::Removed => removed += 1,
+            _ => {}
+        }
+        match right.kind {
+            DiffLineKind::Added => added += 1,
+            _ => {}
+        }
+    }
+
     div()
         .flex()
         .flex_col()
         .size_full()
-        .bg(gpui::hsla(0.0, 0.0, 0.1, 1.0))
+        .bg(colors::BG_BASE)
         .child(
             div()
                 .flex()
@@ -225,8 +239,8 @@ pub(crate) fn render_diff_view(
                 .items_center()
                 .h(px(28.0))
                 .border_b_1()
-                .border_color(gpui::hsla(0.0, 0.0, 0.15, 1.0))
-                .bg(gpui::hsla(0.0, 0.0, 0.08, 1.0))
+                .border_color(colors::BG_BORDER)
+                .bg(colors::BG_DEEPEST)
                 .child(
                     div()
                         .flex_1()
@@ -236,7 +250,7 @@ pub(crate) fn render_diff_view(
                         .child(
                             div()
                                 .text_size(px(12.0))
-                                .text_color(gpui::hsla(0.0, 0.0, 0.7, 1.0))
+                                .text_color(colors::TEXT_DEFAULT)
                                 .child(left_title),
                         ),
                 )
@@ -249,7 +263,7 @@ pub(crate) fn render_diff_view(
                         .child(
                             div()
                                 .text_size(px(12.0))
-                                .text_color(gpui::hsla(0.0, 0.0, 0.7, 1.0))
+                                .text_color(colors::TEXT_DEFAULT)
                                 .child(right_title),
                         ),
                 )
@@ -259,8 +273,8 @@ pub(crate) fn render_diff_view(
                         .cursor_pointer()
                         .px(px(8.0))
                         .text_size(px(14.0))
-                        .text_color(gpui::hsla(0.0, 0.0, 0.5, 1.0))
-                        .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.2, 1.0)))
+                        .text_color(colors::TEXT_SECONDARY)
+                        .hover(|s| s.bg(colors::BG_HOVER))
                         .child("x")
                         .on_click(close),
                 ),
@@ -277,17 +291,30 @@ pub(crate) fn render_diff_view(
                 .flex()
                 .flex_row()
                 .justify_end()
+                .gap(px(12.0))
                 .h(px(22.0))
                 .px(px(8.0))
                 .items_center()
                 .border_t_1()
-                .border_color(gpui::hsla(0.0, 0.0, 0.15, 1.0))
-                .bg(gpui::hsla(0.0, 0.0, 0.08, 1.0))
+                .border_color(colors::BG_BORDER)
+                .bg(colors::BG_DEEPEST)
                 .child(
                     div()
                         .text_size(px(11.0))
-                        .text_color(gpui::hsla(0.0, 0.0, 0.4, 1.0))
+                        .text_color(colors::TEXT_DIM)
                         .child(format!("{} lines", state.lines.len())),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(colors::ACCENT)
+                        .child(format!("+{}", added)),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(Hsla { h: 0.0, s: 0.6, l: 0.55, a: 1.0 })
+                        .child(format!("-{}", removed)),
                 ),
         )
 }

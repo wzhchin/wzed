@@ -4,6 +4,8 @@ use editor::Editor;
 use gpui::*;
 use gpui::prelude::FluentBuilder as _;
 
+use crate::app_theme::colors;
+
 pub(crate) struct Tab {
     pub editor: Entity<Editor>,
     pub path: Option<PathBuf>,
@@ -58,12 +60,12 @@ impl Render for DraggedTab {
         div()
             .px(px(10.0))
             .py(px(6.0))
-            .bg(gpui::hsla(0.0, 0.0, 0.2, 0.9))
+            .bg(colors::BG_DRAG)
             .border_1()
-            .border_color(gpui::hsla(220.0, 0.8, 0.6, 1.0))
+            .border_color(colors::ACCENT)
             .rounded(px(4.0))
             .text_size(px(13.0))
-            .text_color(gpui::hsla(0.0, 0.0, 0.9, 1.0))
+            .text_color(colors::TEXT_PRIMARY)
             .child(self.title.clone())
     }
 }
@@ -88,9 +90,9 @@ pub(crate) fn render_tab_list(
                         .px(px(10.0))
                         .py(px(3.0))
                         .text_size(px(10.0))
-                        .text_color(gpui::hsla(0.0, 0.0, 0.4, 1.0))
+                        .text_color(colors::TEXT_DIM)
                         .border_t_1()
-                        .border_color(gpui::hsla(0.0, 0.0, 0.12, 1.0))
+                        .border_color(colors::BG_BASE)
                         .child(group.clone())
                         .into_any_element(),
                 );
@@ -119,9 +121,9 @@ pub(crate) fn render_tab_list(
         };
 
         let icon_color = if active {
-            gpui::hsla(0.0, 0.0, 0.7, 1.0)
+            colors::TEXT_DEFAULT
         } else {
-            gpui::hsla(0.0, 0.0, 0.45, 1.0)
+            colors::TEXT_DIM_ICON
         };
 
         let mut tab_el = div()
@@ -151,9 +153,9 @@ pub(crate) fn render_tab_list(
                         div()
                             .text_size(px(13.0))
                             .text_color(if active {
-                                gpui::hsla(0.0, 0.0, 0.9, 1.0)
+                                colors::TEXT_PRIMARY
                             } else {
-                                gpui::hsla(0.0, 0.0, 0.6, 1.0)
+                                colors::TEXT_MUTED
                             })
                             .text_ellipsis()
                             .child(title),
@@ -164,7 +166,7 @@ pub(crate) fn render_tab_list(
                                 .ml(px(4.0))
                                 .size(px(6.0))
                                 .rounded_full()
-                                .bg(gpui::hsla(220.0, 0.8, 0.6, 1.0)),
+                                .bg(colors::ACCENT),
                         )
                     }),
             )
@@ -176,10 +178,10 @@ pub(crate) fn render_tab_list(
                     .justify_center()
                     .size(px(16.0))
                     .rounded(px(3.0))
-                    .text_color(gpui::hsla(0.0, 0.0, 0.5, 1.0))
+                    .text_color(colors::TEXT_SECONDARY)
                     .hover(|s| {
-                        s.bg(gpui::hsla(0.0, 0.0, 0.25, 1.0))
-                            .text_color(gpui::hsla(0.0, 0.0, 0.9, 1.0))
+                        s.bg(colors::BG_HOVER)
+                            .text_color(colors::TEXT_PRIMARY)
                     })
                     .child(
                         svg()
@@ -197,11 +199,12 @@ pub(crate) fn render_tab_list(
             }))
             .on_mouse_down(
                 MouseButton::Right,
-                cx.listener(move |workspace, _event, _window, cx| {
+                cx.listener(move |workspace, event: &MouseDownEvent, _window, cx| {
                     let is_pinned = workspace.tabs.get(idx).is_some_and(|t| t.pinned);
                     workspace.context_menu_tab = Some(idx);
                     workspace.show_tab_context_menu = true;
                     workspace.tab_context_menu_is_pinned = is_pinned;
+                    workspace.context_menu_position = event.position;
                     cx.notify();
                 }),
             )
@@ -227,20 +230,20 @@ pub(crate) fn render_tab_list(
 
         if active {
             tab_el = tab_el
-                .bg(gpui::hsla(0.0, 0.0, 0.18, 1.0))
+                .bg(colors::BG_TAB_ACTIVE)
                 .border_l_2()
                 .border_color(if pinned {
-                    gpui::hsla(40.0, 0.8, 0.55, 1.0)
+                    colors::GOLD_ACTIVE
                 } else {
-                    gpui::hsla(220.0, 0.8, 0.6, 1.0)
+                    colors::ACCENT
                 });
         } else if pinned {
             tab_el = tab_el
-                .bg(gpui::hsla(0.0, 0.0, 0.13, 1.0))
+                .bg(colors::BG_PANEL)
                 .border_l_2()
-                .border_color(gpui::hsla(40.0, 0.6, 0.4, 1.0));
+                .border_color(colors::GOLD_INACTIVE);
         } else {
-            tab_el = tab_el.hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.13, 1.0)));
+            tab_el = tab_el.hover(|s| s.bg(colors::BG_PANEL));
         }
 
         children.push(tab_el.into_any_element());

@@ -1,6 +1,7 @@
 use gpui::*;
 use gpui::prelude::FluentBuilder as _;
 
+use crate::app_theme::colors;
 use crate::workspace::LiteWorkspace;
 
 #[derive(Clone)]
@@ -67,11 +68,13 @@ impl LiteWorkspace {
         cx: &mut Context<Self>,
     ) {
         self.show_command_center = !self.show_command_center;
-        self.command_center_query.clear();
+        self.command_center_editor.update(cx, |editor, cx| {
+            editor.set_text("", window, cx);
+        });
         self.command_center_selected = 0;
         self.command_submenu = None;
         if self.show_command_center {
-            self.focus_handle.focus(window, cx);
+            self.command_center_editor.focus_handle(cx).focus(window, cx);
         }
         cx.notify();
     }
@@ -84,14 +87,18 @@ impl LiteWorkspace {
     ) {
         if let Some(submenu) = &entry.submenu_kind {
             self.command_submenu = Some(submenu.clone());
-            self.command_center_query.clear();
+            self.command_center_editor.update(cx, |editor, cx| {
+                editor.set_text("", window, cx);
+            });
             self.command_center_selected = 0;
             cx.notify();
             return;
         }
 
         self.show_command_center = false;
-        self.command_center_query.clear();
+        self.command_center_editor.update(cx, |editor, cx| {
+            editor.set_text("", window, cx);
+        });
         self.command_submenu = None;
 
         if let Ok(action) = cx.build_action(entry.action_name, None) {
@@ -107,7 +114,9 @@ impl LiteWorkspace {
         cx: &mut Context<Self>,
     ) {
         self.show_command_center = false;
-        self.command_center_query.clear();
+        self.command_center_editor.update(cx, |editor, cx| {
+            editor.set_text("", window, cx);
+        });
         self.command_submenu = None;
         match submenu {
             CommandSubmenu::SwitchBuffer => {
@@ -132,11 +141,7 @@ impl LiteWorkspace {
                 cx.notify();
             }
             CommandSubmenu::ChangeFileType => {
-                let grammar_names = [
-                    "bash", "c", "cpp", "css", "diff", "go", "json", "jsonc", "markdown",
-                    "python", "regex", "rust", "tsx", "typescript", "yaml",
-                ];
-                if let Some(&grammar_name) = grammar_names.get(index) {
+                if let Some(&grammar_name) = crate::utils::GRAMMAR_NAMES.get(index) {
                     let languages = self.languages.clone();
                     let buffer = {
                         let tab = &self.tabs[self.active];
@@ -170,7 +175,9 @@ pub(crate) fn render_command_center(
     _window: &mut Window,
     cx: &mut Context<LiteWorkspace>,
 ) -> impl IntoElement {
-    let all_commands = collect_commands(cx);
+    let query_text = this.command_center_editor.read(cx).text(cx).to_string();
+    let query_lower = query_text.to_lowercase();
+
     let submenu_items: Vec<String> = match &this.command_submenu {
         Some(CommandSubmenu::SwitchBuffer) => {
             this.tabs.iter().map(|t| t.title.to_string()).collect()
@@ -179,9 +186,7 @@ pub(crate) fn render_command_center(
             crate::encoding::SUPPORTED_ENCODINGS.iter().map(|s| s.to_string()).collect()
         }
         Some(CommandSubmenu::ChangeFileType) => {
-            ["Bash", "C", "C++", "CSS", "Diff", "Go", "JSON", "JSONC", "Markdown",
-             "Python", "Regex", "Rust", "TSX", "TypeScript", "YAML",
-            ].iter().map(|s| s.to_string()).collect()
+            crate::utils::GRAMMAR_DISPLAY_NAMES.iter().map(|s| s.to_string()).collect()
         }
         Some(CommandSubmenu::RecentFiles) => {
             this.recent_files.entries.iter().take(20)
@@ -200,43 +205,38 @@ pub(crate) fn render_command_center(
     let submenu_clone = this.command_submenu.clone();
     let is_submenu = this.command_submenu.is_some();
 
-    let filtered_commands: Vec<CommandEntry> = if is_submenu {
-        Vec::new()
-    } else {
-        all_commands
-    };
+    let all_commands = collect_commands(cx);
 
     let filtered: Vec<(usize, String)> = if is_submenu {
         submenu_items
             .iter()
             .enumerate()
             .filter(|(_, item)| {
-                if this.command_center_query.is_empty() {
+                if query_text.is_empty() {
                     true
                 } else {
-                    item.to_lowercase()
-                        .contains(&this.command_center_query.to_lowercase())
+                    item.to_lowercase().contains(&query_lower)
                 }
             })
             .map(|(i, s)| (i, s.clone()))
             .collect()
     } else {
-        filtered_commands
+        all_commands
             .iter()
             .enumerate()
             .filter(|(_, cmd)| {
-                if this.command_center_query.is_empty() {
+                if query_text.is_empty() {
                     true
                 } else {
-                    cmd.display_name
-                        .to_lowercase()
-                        .contains(&this.command_center_query.to_lowercase())
+                    cmd.display_name.to_lowercase().contains(&query_lower)
                 }
             })
             .map(|(i, cmd)| (i, cmd.display_name.clone()))
             .collect()
     };
     let selected = this.command_center_selected.min(filtered.len().saturating_sub(1));
+
+    let cc_editor = this.command_center_editor.clone();
 
     div()
         .id("command-center-overlay")
@@ -252,15 +252,13 @@ pub(crate) fn render_command_center(
             div()
                 .id("command-center")
                 .occlude()
-                .focusable()
-                .track_focus(&this.focus_handle)
                 .flex()
                 .flex_col()
                 .w(px(400.0))
                 .max_h(px(500.0))
-                .bg(gpui::hsla(0.0, 0.0, 0.13, 1.0))
+                .bg(colors::BG_PANEL)
                 .border_1()
-                .border_color(gpui::hsla(0.0, 0.0, 0.3, 1.0))
+                .border_color(colors::TEXT_DIM)
                 .rounded(px(8.0))
                 .shadow_lg()
                 .on_mouse_down_out(cx.listener(|this, _, _, cx| {
@@ -270,13 +268,16 @@ pub(crate) fn render_command_center(
                 .on_key_down({
                     let filtered_for_keys = filtered.clone();
                     let submenu_for_keys = submenu_clone.clone();
+                    let cmds_for_enter = all_commands.clone();
                     cx.listener(
                         move |this, event: &KeyDownEvent, window, cx| {
                         match event.keystroke.key.as_str() {
                             "escape" => {
                                 if this.command_submenu.is_some() {
                                     this.command_submenu = None;
-                                    this.command_center_query.clear();
+                                    this.command_center_editor.update(cx, |editor, cx| {
+                                        editor.set_text("", window, cx);
+                                    });
                                     this.command_center_selected = 0;
                                 } else {
                                     this.show_command_center = false;
@@ -293,6 +294,8 @@ pub(crate) fn render_command_center(
                                 cx.notify();
                             }
                             "enter" => {
+                                let query = this.command_center_editor.read(cx).text(cx).to_string();
+                                let query_lower = query.to_lowercase();
                                 if is_submenu {
                                     let selected_idx = filtered_for_keys
                                         .get(this.command_center_selected)
@@ -307,15 +310,14 @@ pub(crate) fn render_command_center(
                                         );
                                     }
                                 } else {
-                                    let all_cmds = collect_commands(cx);
-                                    let visible: Vec<&CommandEntry> = all_cmds
+                                    let visible: Vec<&CommandEntry> = cmds_for_enter
                                         .iter()
                                         .filter(|cmd| {
-                                            if this.command_center_query.is_empty() {
+                                            if query.is_empty() {
                                                 true
                                             } else {
                                                 cmd.display_name.to_lowercase().contains(
-                                                    &this.command_center_query.to_lowercase(),
+                                                    &query_lower,
                                                 )
                                             }
                                         })
@@ -325,20 +327,7 @@ pub(crate) fn render_command_center(
                                     }
                                 }
                             }
-                            "backspace" => {
-                                this.command_center_query.pop();
-                                this.command_center_selected = 0;
-                                cx.notify();
-                            }
-                            _ => {
-                                if let Some(ch) = event.keystroke.key.chars().next()
-                                    && (ch.is_alphanumeric() || ch == ' ' || ch == '-')
-                                {
-                                    this.command_center_query.push(ch);
-                                    this.command_center_selected = 0;
-                                    cx.notify();
-                                }
-                            }
+                            _ => {}
                         }
                     },
                     )
@@ -349,13 +338,13 @@ pub(crate) fn render_command_center(
                         .flex_row()
                         .items_center()
                         .px(px(12.0))
-                        .py(px(10.0))
+                        .py(px(6.0))
                         .border_b_1()
-                        .border_color(gpui::hsla(0.0, 0.0, 0.2, 1.0))
+                        .border_color(colors::BG_HOVER)
                         .child(
                             div()
                                 .text_size(px(13.0))
-                                .text_color(gpui::hsla(0.0, 0.0, 0.5, 1.0))
+                                .text_color(colors::TEXT_SECONDARY)
                                 .child(if is_submenu {
                                     submenu_title.unwrap_or("M-x")
                                 } else {
@@ -366,14 +355,8 @@ pub(crate) fn render_command_center(
                             div()
                                 .flex_1()
                                 .text_size(px(14.0))
-                                .text_color(gpui::hsla(0.0, 0.0, 0.9, 1.0))
-                                .child(if this.command_center_query.is_empty() {
-                                    "Type a command...".into()
-                                } else {
-                                    SharedString::from(
-                                        this.command_center_query.clone(),
-                                    )
-                                }),
+                                .text_color(colors::TEXT_PRIMARY)
+                                .child(cc_editor),
                         ),
                 )
                 .child(
@@ -396,26 +379,26 @@ pub(crate) fn render_command_center(
                                     .text_size(px(13.0))
                                     .cursor_pointer()
                                     .text_color(if is_selected {
-                                        gpui::hsla(0.0, 0.0, 1.0, 1.0)
+                                        colors::TEXT_SELECTED
                                     } else {
-                                        gpui::hsla(0.0, 0.0, 0.8, 1.0)
+                                        colors::TEXT_BRIGHT
                                     })
                                     .when(is_selected, |el| {
-                                        el.bg(gpui::hsla(220.0, 0.6, 0.4, 1.0))
+                                        el.bg(colors::ACCENT_SELECTED)
                                     })
                                     .hover(|s| {
-                                        s.bg(gpui::hsla(220.0, 0.5, 0.35, 1.0))
+                                        s.bg(colors::ACCENT_HOVER)
                                     })
                                     .child(cmd_text.clone())
                                     .on_click({
                                         let sub = submenu_clone.clone();
+                                        let click_cmds = all_commands.clone();
                                         cx.listener(
                                             move |this, _, window, cx| {
                                                 if let Some(ref sub) = sub {
                                                     this.execute_submenu_item(sub, click_idx, window, cx);
                                                 } else {
-                                                    let all_cmds = collect_commands(cx);
-                                                    let entry = all_cmds.iter().find(|cmd| cmd.display_name == cmd_text);
+                                                    let entry = click_cmds.iter().find(|cmd| cmd.display_name == cmd_text);
                                                     if let Some(entry) = entry {
                                                         this.execute_command(entry, window, cx);
                                                     }

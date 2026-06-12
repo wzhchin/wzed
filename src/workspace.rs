@@ -19,9 +19,10 @@ use crate::search::SearchState;
 use crate::command_center;
 use crate::topbar;
 use crate::utils;
+use crate::app_theme::colors;
 
 use crate::{
-    AutosaveTimer, CloseTab, CompareFiles, FindNext, FindPrevious, MoveToGroup,
+    AutosaveTimer, CloseTab, CompareFiles, Dismiss, FindNext, FindPrevious, MoveToGroup,
     NewFile, OpenFile, ReloadWithEncoding, ReplaceAll, ReplaceNext, SaveAll,
     SaveFile, SearchAllTabs, ToggleFind, ToggleRegex,
     ToggleReplace, ToggleToolbar,
@@ -90,6 +91,23 @@ pub(crate) fn save_session_from_outside(workspace: &LiteWorkspace, cx: &App) {
     save_session(workspace, cx);
 }
 
+/// Remove snapshot files older than 7 days to prevent unbounded disk growth.
+fn prune_old_snapshots() {
+    let snapshots_dir = utils::config_dir().join("snapshots");
+    let Ok(entries) = std::fs::read_dir(&snapshots_dir) else {
+        return;
+    };
+    let cutoff = std::time::SystemTime::now() - std::time::Duration::from_secs(7 * 24 * 3600);
+    for entry in entries.flatten() {
+        let Ok(metadata) = entry.metadata() else { continue };
+        if let Ok(modified) = metadata.modified() {
+            if modified < cutoff {
+                std::fs::remove_file(entry.path()).ok();
+            }
+        }
+    }
+}
+
 pub(crate) struct LiteWorkspace {
     pub(crate) tabs: Vec<Tab>,
     pub active: usize,
@@ -103,13 +121,15 @@ pub(crate) struct LiteWorkspace {
     tab_scroll_handle: ScrollHandle,
     last_scrolled_active: usize,
     pub(crate) show_command_center: bool,
-    pub(crate) command_center_query: String,
+    pub(crate) command_center_editor: Entity<Editor>,
     pub(crate) command_center_selected: usize,
     pub(crate) command_submenu: Option<command_center::CommandSubmenu>,
     diff_state: Option<diff_view::DiffState>,
     pub(crate) show_tab_context_menu: bool,
     pub(crate) context_menu_tab: Option<usize>,
     pub(crate) tab_context_menu_is_pinned: bool,
+    pub(crate) context_menu_position: gpui::Point<Pixels>,
+    pub(crate) notification: Option<(String, std::time::Instant)>,
 }
 
 impl LiteWorkspace {
@@ -134,19 +154,28 @@ impl LiteWorkspace {
             tab_scroll_handle: ScrollHandle::new(),
             last_scrolled_active: 0,
             show_command_center: false,
-            command_center_query: String::new(),
+            command_center_editor: cx.new(|cx| Editor::single_line(window, cx)),
             command_center_selected: 0,
             command_submenu: None,
             diff_state: None,
             show_tab_context_menu: false,
             context_menu_tab: None,
             tab_context_menu_is_pinned: false,
+            context_menu_position: gpui::Point::new(px(0.0), px(0.0)),
+            notification: None,
         };
 
         let query_editor = this.search.query_editor.clone();
         cx.observe(&query_editor, move |this, _editor, cx| {
             let active_editor = this.tabs[this.active].editor.clone();
             this.search.run_search(&active_editor, cx);
+            cx.notify();
+        })
+        .detach();
+
+        let cc_editor = this.command_center_editor.clone();
+        cx.observe(&cc_editor, move |this, _editor, cx| {
+            this.command_center_selected = 0;
             cx.notify();
         })
         .detach();
@@ -181,6 +210,20 @@ impl LiteWorkspace {
         this
     }
 
+    pub(crate) fn show_notification(&mut self, message: impl Into<String>, cx: &mut Context<Self>) {
+        self.notification = Some((message.into(), std::time::Instant::now()));
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(std::time::Duration::from_secs(4)).await;
+            this.update(cx, |this, cx| {
+                if this.notification.as_ref().is_some_and(|(_, t)| t.elapsed().as_secs() >= 4) {
+                    this.notification = None;
+                    cx.notify();
+                }
+            }).ok();
+        }).detach();
+    }
+
     pub(crate) fn restore_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let path = session_path();
         let data = match std::fs::read_to_string(&path) {
@@ -190,6 +233,7 @@ impl LiteWorkspace {
                     None,
                     "untitled".into(),
                     String::new(),
+                    None,
                     window,
                     cx,
                 ));
@@ -204,6 +248,7 @@ impl LiteWorkspace {
                     None,
                     "untitled".into(),
                     String::new(),
+                    None,
                     window,
                     cx,
                 ));
@@ -216,6 +261,7 @@ impl LiteWorkspace {
                 None,
                 "untitled".into(),
                 String::new(),
+                None,
                 window,
                 cx,
             ));
@@ -239,11 +285,11 @@ impl LiteWorkspace {
                         }
                     } else if let Some(content) = tab.unsaved_content {
                         let title = utils::file_name_from_path(&path);
-                        self.tabs.push(Self::create_tab_from_content(
+                        self.tabs.push(Self::create_tab(
                             Some(path),
                             title.into(),
                             content,
-                            &self.languages,
+                            Some(&self.languages),
                             window,
                             cx,
                         ));
@@ -255,6 +301,7 @@ impl LiteWorkspace {
                         None,
                         "untitled".into(),
                         content,
+                        None,
                         window,
                         cx,
                     ));
@@ -279,48 +326,31 @@ impl LiteWorkspace {
         path: Option<PathBuf>,
         title: SharedString,
         content: String,
+        languages: Option<&Arc<LanguageRegistry>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Tab {
-        let buffer = cx.new(|cx| Buffer::local(content, cx));
-        let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        let editor = cx.new(|cx| Editor::new(EditorMode::full(), multibuffer, None, window, cx));
-        editor.update(cx, |e, cx| e.set_soft_wrap_mode(SoftWrap::EditorWidth, cx));
-        Tab {
-            editor,
-            path,
-            title,
-            group: None,
-            encoding: encoding_rs::UTF_8,
-            pinned: false,
-        }
-    }
+        let buffer = match languages {
+            Some(registry) => {
+                let path_for_lang = path.clone();
+                let registry = registry.clone();
+                cx.new(|cx| {
+                    let buffer = Buffer::local(content, cx);
+                    buffer.set_language_registry(registry.clone());
 
-    fn create_tab_from_content(
-        path: Option<PathBuf>,
-        title: SharedString,
-        content: String,
-        languages: &Arc<LanguageRegistry>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Tab {
-        let path_for_lang = path.clone();
-        let languages = languages.clone();
-        let buffer = cx.new(|cx| {
-            let buffer = Buffer::local(content, cx);
-            buffer.set_language_registry(languages.clone());
-
-            let available = path_for_lang.as_ref().and_then(|p| languages.language_for_file_path(p));
-            if let Some(available) = available {
-                cx.spawn(async move |buffer: WeakEntity<Buffer>, cx| {
-                    let lang = languages.load_language(&available).await??;
-                    buffer.update(cx, |buf, cx| buf.set_language(Some(lang), cx))?;
-                    Result::<()>::Ok(())
+                    if let Some(available) = path_for_lang.as_ref().and_then(|p| registry.language_for_file_path(p)) {
+                        cx.spawn(async move |buffer: WeakEntity<Buffer>, cx| {
+                            let lang = registry.load_language(&available).await??;
+                            buffer.update(cx, |buf, cx| buf.set_language(Some(lang), cx))?;
+                            Result::<()>::Ok(())
+                        })
+                        .detach_and_log_err(cx);
+                    }
+                    buffer
                 })
-                .detach_and_log_err(cx);
             }
-            buffer
-        });
+            None => cx.new(|cx| Buffer::local(content, cx)),
+        };
         let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let editor = cx.new(|cx| Editor::new(EditorMode::full(), multibuffer, None, window, cx));
         editor.update(cx, |e, cx| e.set_soft_wrap_mode(SoftWrap::EditorWidth, cx));
@@ -332,17 +362,6 @@ impl LiteWorkspace {
             encoding: encoding_rs::UTF_8,
             pinned: false,
         }
-    }
-
-    fn create_empty_editor(
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Entity<Editor> {
-        let buffer = cx.new(|cx| Buffer::local("", cx));
-        let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        let editor = cx.new(|cx| Editor::new(EditorMode::full(), multibuffer, None, window, cx));
-        editor.update(cx, |e, cx| e.set_soft_wrap_mode(SoftWrap::EditorWidth, cx));
-        editor
     }
 
     pub(crate) fn open_file_path(
@@ -489,6 +508,7 @@ impl LiteWorkspace {
         if tab.path.is_some() {
             if let Err(err) = self.save_active_tab(cx) {
                 eprintln!("failed to save: {err:#}");
+                self.show_notification(format!("Save failed: {err:#}"), cx);
             }
             return;
         }
@@ -505,6 +525,7 @@ impl LiteWorkspace {
             this.update(cx, |this, cx| {
                 if let Err(err) = this.save_active_tab_as(path, cx) {
                     eprintln!("failed to save as: {err:#}");
+                    this.show_notification(format!("Save failed: {err:#}"), cx);
                 }
             }).ok();
         }).detach();
@@ -540,13 +561,21 @@ impl LiteWorkspace {
             if !tab.is_dirty(cx) {
                 continue;
             }
+            self.save_snapshot_for_tab(i, tab, cx);
+        }
+    }
 
-            let content = tab.editor.read(cx).text(cx);
-            let timestamp = utils::timestamp_secs();
-            let snapshot_name = format!("tab-{i}-{timestamp}.txt");
-            if let Err(err) = std::fs::write(snapshots_dir.join(&snapshot_name), &content) {
-                eprintln!("autosave snapshot failed: {err:#}");
-            }
+    fn save_snapshot_for_tab(&self, index: usize, tab: &Tab, cx: &App) {
+        let snapshots_dir = utils::config_dir().join("snapshots");
+        if let Err(err) = std::fs::create_dir_all(&snapshots_dir) {
+            eprintln!("failed to create snapshots dir: {err:#}");
+            return;
+        }
+        let content = tab.editor.read(cx).text(cx);
+        let timestamp = utils::timestamp_secs();
+        let snapshot_name = format!("tab-{index}-{timestamp}.txt");
+        if let Err(err) = std::fs::write(snapshots_dir.join(&snapshot_name), &content) {
+            eprintln!("autosave snapshot failed: {err:#}");
         }
     }
 
@@ -557,6 +586,7 @@ impl LiteWorkspace {
     ) {
         self.save_dirty_snapshots(cx);
         self.save_session(cx);
+        prune_old_snapshots();
     }
 
     pub(crate) fn handle_new(
@@ -565,15 +595,14 @@ impl LiteWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let editor = Self::create_empty_editor(window, cx);
-        self.tabs.push(Tab {
-            editor,
-            path: None,
-            title: "untitled".into(),
-            group: None,
-            encoding: encoding_rs::UTF_8,
-            pinned: false,
-        });
+        self.tabs.push(Self::create_tab(
+            None,
+            "untitled".into(),
+            String::new(),
+            None,
+            window,
+            cx,
+        ));
         self.active = self.tabs.len() - 1;
         self.save_session(cx);
         cx.notify();
@@ -591,6 +620,11 @@ impl LiteWorkspace {
     pub(crate) fn close_tab_at(&mut self, index: usize, cx: &mut Context<Self>) {
         if self.tabs.len() <= 1 {
             return;
+        }
+        if let Some(tab) = self.tabs.get(index) {
+            if tab.is_dirty(cx) {
+                self.save_snapshot_for_tab(index, tab, cx);
+            }
         }
         self.tabs.remove(index);
         if self.tabs.is_empty() {
@@ -611,11 +645,6 @@ impl LiteWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.diff_state.is_some() {
-            self.diff_state = None;
-            cx.notify();
-            return;
-        }
         if self.search.visible {
             self.search.visible = false;
             let active_editor = &self.tabs[self.active].editor;
@@ -633,6 +662,28 @@ impl LiteWorkspace {
             self.search.query_editor.focus_handle(cx).focus(window, cx);
         }
         cx.notify();
+    }
+
+    pub(crate) fn handle_dismiss(
+        &mut self,
+        _action: &Dismiss,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.diff_state.is_some() {
+            self.diff_state = None;
+            cx.notify();
+            return;
+        }
+        if self.search.visible {
+            self.search.visible = false;
+            let active_editor = &self.tabs[self.active].editor;
+            self.search.clear_highlights(active_editor, cx);
+            self.search.matches.clear();
+            self.search.current_match = None;
+            active_editor.update(cx, |_, cx| cx.notify());
+            cx.notify();
+        }
     }
 
     pub(crate) fn handle_find_next(
@@ -776,6 +827,7 @@ impl LiteWorkspace {
             Ok(c) => c,
             Err(err) => {
                 eprintln!("failed to reload with encoding {label}: {err:#}");
+                self.show_notification(format!("Failed to reload: {err:#}"), cx);
                 return;
             }
         };
@@ -868,6 +920,7 @@ impl Render for LiteWorkspace {
         let show_tab_context_menu = self.show_tab_context_menu;
         let context_menu_tab = self.context_menu_tab;
         let tab_context_menu_is_pinned = self.tab_context_menu_is_pinned;
+        let context_menu_y = self.context_menu_position.y;
 
         let side_tabs = div()
             .id("side-tabs")
@@ -875,22 +928,22 @@ impl Render for LiteWorkspace {
             .flex_col()
             .w(px(180.0))
             .h_full()
-            .bg(gpui::hsla(0.0, 0.0, 0.1, 1.0))
+            .bg(colors::BG_BASE)
             .border_r_1()
-            .border_color(gpui::hsla(0.0, 0.0, 0.15, 1.0))
+            .border_color(colors::BG_BORDER)
             .child(tab_list)
             .when(show_tab_context_menu, |el| {
                 el.child(
                     div()
                         .absolute()
                         .left(px(10.0))
-                        .top(px(100.0))
-                        .bg(gpui::hsla(0.0, 0.0, 0.15, 1.0))
+                        .top(context_menu_y)
+                        .bg(colors::BG_PANEL)
                         .border_1()
-                        .border_color(gpui::hsla(0.0, 0.0, 0.25, 1.0))
+                        .border_color(colors::BG_BORDER_STRONG)
                         .rounded(px(6.0))
                         .shadow(vec![gpui::BoxShadow {
-                            color: gpui::hsla(0.0, 0.0, 0.0, 0.5),
+                            color: colors::SHADOW,
                             offset: point(px(0.0), px(4.0)),
                             blur_radius: px(12.0),
                             spread_radius: px(0.0),
@@ -906,8 +959,8 @@ impl Render for LiteWorkspace {
                                 .py(px(6.0))
                                 .cursor_pointer()
                                 .text_size(px(13.0))
-                                .text_color(gpui::hsla(0.0, 0.0, 0.8, 1.0))
-                                .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.22, 1.0)))
+                                .text_color(colors::TEXT_BRIGHT)
+                                .hover(|s| s.bg(colors::BG_HOVER_DEEP))
                                 .child(if tab_context_menu_is_pinned {
                                     "Unpin Tab"
                                 } else {
@@ -935,8 +988,8 @@ impl Render for LiteWorkspace {
                                 .py(px(6.0))
                                 .cursor_pointer()
                                 .text_size(px(13.0))
-                                .text_color(gpui::hsla(0.0, 0.0, 0.8, 1.0))
-                                .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.22, 1.0)))
+                                .text_color(colors::TEXT_BRIGHT)
+                                .hover(|s| s.bg(colors::BG_HOVER_DEEP))
                                 .child("Close Tab")
                                 .on_click(cx.listener(move |workspace, _, _window, cx| {
                                     let Some(tab_idx) = context_menu_tab else {
@@ -958,12 +1011,12 @@ impl Render for LiteWorkspace {
                     .h(px(32.0))
                     .cursor_pointer()
                     .border_t_1()
-                    .border_color(gpui::hsla(0.0, 0.0, 0.15, 1.0))
-                    .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.15, 1.0)))
+                    .border_color(colors::BG_BORDER)
+                    .hover(|s| s.bg(colors::BG_BORDER))
                     .child(
                         div()
                             .text_size(px(16.0))
-                            .text_color(gpui::hsla(0.0, 0.0, 0.6, 1.0))
+                            .text_color(colors::TEXT_MUTED)
                             .child("+"),
                     )
                     .on_click(cx.listener(|workspace, _, window, cx| {
@@ -980,13 +1033,13 @@ impl Render for LiteWorkspace {
             .w_full()
             .h(px(24.0))
             .px(px(12.0))
-            .bg(gpui::hsla(0.0, 0.0, 0.08, 1.0))
+            .bg(colors::BG_DEEPEST)
             .border_t_1()
-            .border_color(gpui::hsla(0.0, 0.0, 0.15, 1.0))
+            .border_color(colors::BG_BORDER)
             .child(
                 div()
                     .text_size(px(12.0))
-                    .text_color(gpui::hsla(0.0, 0.0, 0.6, 1.0))
+                    .text_color(colors::TEXT_MUTED)
                     .child(active_tab.title.clone()),
             )
             .child(
@@ -998,13 +1051,13 @@ impl Render for LiteWorkspace {
                     .child(
                         div()
                             .text_size(px(12.0))
-                            .text_color(gpui::hsla(0.0, 0.0, 0.5, 1.0))
+                            .text_color(colors::TEXT_SECONDARY)
                             .child(encoding_label),
                     )
                     .child(
                         div()
                             .text_size(px(12.0))
-                            .text_color(gpui::hsla(0.0, 0.0, 0.5, 1.0))
+                            .text_color(colors::TEXT_SECONDARY)
                             .child(format!(
                                 "Tab {} of {}",
                                 self.active + 1,
@@ -1021,7 +1074,7 @@ impl Render for LiteWorkspace {
             .flex()
             .flex_col()
             .size_full()
-            .bg(gpui::hsla(0.0, 0.0, 0.1, 1.0))
+            .bg(colors::BG_BASE)
             .capture_any_mouse_down(cx.listener(|workspace, _event, _window, cx| {
                 if workspace.show_tab_context_menu {
                     workspace.show_tab_context_menu = false;
@@ -1067,6 +1120,7 @@ impl Render for LiteWorkspace {
             .on_action(cx.listener(Self::handle_new))
             .on_action(cx.listener(Self::handle_close_tab))
             .on_action(cx.listener(Self::handle_toggle_find))
+            .on_action(cx.listener(Self::handle_dismiss))
             .on_action(cx.listener(Self::handle_find_next))
             .on_action(cx.listener(Self::handle_find_previous))
             .on_action(cx.listener(Self::handle_toggle_replace))
@@ -1083,6 +1137,29 @@ impl Render for LiteWorkspace {
             .when(self.show_command_center, |el| {
                 el.child(command_center::render_command_center(self, _window, cx))
             })
+            .when(
+                self.notification.as_ref().is_some_and(|(_, instant)| instant.elapsed().as_secs() < 4),
+                |el| {
+                    let msg = self.notification.as_ref().unwrap().0.clone();
+                    el.child(
+                        div()
+                            .absolute()
+                            .bottom(px(36.0))
+                            .right(px(12.0))
+                            .px(px(12.0))
+                            .py(px(8.0))
+                            .bg(colors::BG_PANEL)
+                            .border_1()
+                            .border_color(colors::ACCENT)
+                            .rounded(px(6.0))
+                            .shadow_lg()
+                            .text_size(px(13.0))
+                            .text_color(colors::TEXT_PRIMARY)
+                            .max_w(px(400.0))
+                            .child(msg),
+                    )
+                },
+            )
             .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
                 for path in paths.paths() {
                     if path.is_file() {

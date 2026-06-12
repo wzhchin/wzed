@@ -4,6 +4,7 @@ use editor::{
 };
 use gpui::*;
 
+use crate::app_theme::colors;
 use crate::workspace::LiteWorkspace;
 use crate::{
     FindNext, FindPrevious, ReplaceAll, ReplaceNext, ToggleFind, ToggleRegex,
@@ -95,11 +96,12 @@ impl SearchState {
             })
             .collect();
 
+        let highlight_color = colors::SEARCH_CURRENT;
         active_editor.update(cx, |editor, cx| {
             editor.highlight_background(
                 HighlightKey::BufferSearchHighlights,
                 &anchor_ranges,
-                |_, _| gpui::hsla(48.0 / 360.0, 1.0, 0.5, 0.4),
+                move |_, _| highlight_color,
                 cx,
             );
         });
@@ -197,7 +199,7 @@ impl SearchState {
             editor.edit(edits, cx);
         });
         self.current_match = None;
-        self.run_search(active_editor, cx);
+        self.matches.clear();
     }
 
     fn replace_range(
@@ -227,15 +229,19 @@ impl SearchState {
             return;
         }
 
+        let regex = if self.use_regex {
+            regex::Regex::new(&query).ok()
+        } else {
+            None
+        };
+
         self.tab_results = tabs
             .iter()
             .enumerate()
             .filter_map(|(i, (editor, title))| {
                 let text = editor.read(cx).text(cx);
                 let count = if self.use_regex {
-                    regex::Regex::new(&query)
-                        .map(|re| re.find_iter(&text).count())
-                        .unwrap_or(0)
+                    regex.as_ref().map(|re| re.find_iter(&text).count()).unwrap_or(0)
                 } else {
                     text.matches::<&str>(&query).count()
                 };
@@ -244,13 +250,27 @@ impl SearchState {
                     return None;
                 }
 
-                let first_line = text
-                    .lines()
-                    .find(|line| line.contains(&query[..]))
-                    .unwrap_or("")
-                    .chars()
-                    .take(80)
-                    .collect();
+                let first_line = if self.use_regex {
+                    regex
+                        .as_ref()
+                        .and_then(|re| re.find(&text).map(|m| m.start()))
+                        .and_then(|pos| text[..pos].rfind('\n').map(|nl| nl + 1).or(Some(0)))
+                        .and_then(|line_start| {
+                            text[line_start..].find('\n').map(|end| text[line_start..line_start + end].to_string())
+                                .or_else(|| Some(text[line_start..].to_string()))
+                        })
+                        .unwrap_or_default()
+                        .chars()
+                        .take(80)
+                        .collect()
+                } else {
+                    text.lines()
+                        .find(|line| line.contains(&query[..]))
+                        .unwrap_or("")
+                        .chars()
+                        .take(80)
+                        .collect()
+                };
 
                 Some(TabSearchResult {
                     tab_index: i,
@@ -288,7 +308,7 @@ pub(crate) fn render_search_bar(
         .child(
             div()
                 .text_size(px(12.0))
-                .text_color(gpui::hsla(0.0, 0.0, 0.6, 1.0))
+                .text_color(colors::TEXT_MUTED)
                 .child(match_info),
         )
         .child(
@@ -298,8 +318,8 @@ pub(crate) fn render_search_bar(
                 .px(px(6.0))
                 .py(px(2.0))
                 .text_size(px(14.0))
-                .text_color(gpui::hsla(0.0, 0.0, 0.7, 1.0))
-                .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.2, 1.0)))
+                .text_color(colors::TEXT_DEFAULT)
+                .hover(|s| s.bg(colors::BG_HOVER))
                 .child("^")
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.handle_find_previous(&FindPrevious, window, cx);
@@ -312,8 +332,8 @@ pub(crate) fn render_search_bar(
                 .px(px(6.0))
                 .py(px(2.0))
                 .text_size(px(14.0))
-                .text_color(gpui::hsla(0.0, 0.0, 0.7, 1.0))
-                .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.2, 1.0)))
+                .text_color(colors::TEXT_DEFAULT)
+                .hover(|s| s.bg(colors::BG_HOVER))
                 .child("v")
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.handle_find_next(&FindNext, window, cx);
@@ -326,8 +346,8 @@ pub(crate) fn render_search_bar(
                 .px(px(6.0))
                 .py(px(2.0))
                 .text_size(px(14.0))
-                .text_color(gpui::hsla(0.0, 0.0, 0.5, 1.0))
-                .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.2, 1.0)))
+                .text_color(colors::TEXT_SECONDARY)
+                .hover(|s| s.bg(colors::BG_HOVER))
                 .child("x")
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.handle_toggle_find(&ToggleFind, window, cx);
@@ -341,11 +361,11 @@ pub(crate) fn render_search_bar(
                 .py(px(2.0))
                 .text_size(px(12.0))
                 .text_color(if this.search.use_regex {
-                    gpui::hsla(48.0 / 360.0, 1.0, 0.6, 1.0)
+                    colors::SEARCH_MATCH
                 } else {
-                    gpui::hsla(0.0, 0.0, 0.5, 1.0)
+                    colors::TEXT_SECONDARY
                 })
-                .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.2, 1.0)))
+                .hover(|s| s.bg(colors::BG_HOVER))
                 .child(".*")
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.handle_toggle_regex(&ToggleRegex, window, cx);
@@ -363,7 +383,7 @@ pub(crate) fn render_search_bar(
             .px(px(8.0))
             .gap(px(6.0))
             .border_t_1()
-            .border_color(gpui::hsla(0.0, 0.0, 0.12, 1.0))
+            .border_color(colors::BG_RAISED)
             .child(this.search.replace_editor.clone())
             .child(
                 div()
@@ -372,8 +392,8 @@ pub(crate) fn render_search_bar(
                     .px(px(6.0))
                     .py(px(2.0))
                     .text_size(px(12.0))
-                    .text_color(gpui::hsla(0.0, 0.0, 0.7, 1.0))
-                    .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.2, 1.0)))
+                    .text_color(colors::TEXT_DEFAULT)
+                    .hover(|s| s.bg(colors::BG_HOVER))
                     .child("Replace")
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.handle_replace_next(&ReplaceNext, window, cx);
@@ -386,8 +406,8 @@ pub(crate) fn render_search_bar(
                     .px(px(6.0))
                     .py(px(2.0))
                     .text_size(px(12.0))
-                    .text_color(gpui::hsla(0.0, 0.0, 0.7, 1.0))
-                    .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.2, 1.0)))
+                    .text_color(colors::TEXT_DEFAULT)
+                    .hover(|s| s.bg(colors::BG_HOVER))
                     .child("All")
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.handle_replace_all(&ReplaceAll, window, cx);
@@ -401,9 +421,9 @@ pub(crate) fn render_search_bar(
             .flex()
             .flex_col()
             .w_full()
-            .bg(gpui::hsla(0.0, 0.0, 0.13, 1.0))
+            .bg(colors::BG_PANEL)
             .border_b_1()
-            .border_color(gpui::hsla(0.0, 0.0, 0.15, 1.0))
+            .border_color(colors::BG_BORDER)
             .child(find_row)
             .children(replace_row),
     )
@@ -430,8 +450,8 @@ pub(crate) fn render_multi_tab_results(
             .max_h(px(200.0))
             .overflow_y_scroll()
             .border_t_1()
-            .border_color(gpui::hsla(0.0, 0.0, 0.15, 1.0))
-            .bg(gpui::hsla(0.0, 0.0, 0.08, 1.0))
+            .border_color(colors::BG_BORDER)
+            .bg(colors::BG_DEEPEST)
             .children(results.iter().map(|result| {
                 let tab_index = result.tab_index;
                 div()
@@ -441,7 +461,7 @@ pub(crate) fn render_multi_tab_results(
                     .px(px(10.0))
                     .py(px(4.0))
                     .cursor_pointer()
-                    .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.15, 1.0)))
+                    .hover(|s| s.bg(colors::BG_BORDER))
                     .child(
                         div()
                             .flex()
@@ -450,20 +470,20 @@ pub(crate) fn render_multi_tab_results(
                             .child(
                                 div()
                                     .text_size(px(12.0))
-                                    .text_color(gpui::hsla(0.0, 0.0, 0.9, 1.0))
+                                    .text_color(colors::TEXT_PRIMARY)
                                     .child(result.title.clone()),
                             )
                             .child(
                                 div()
                                     .text_size(px(11.0))
-                                    .text_color(gpui::hsla(0.0, 0.0, 0.5, 1.0))
+                                    .text_color(colors::TEXT_SECONDARY)
                                     .child(format!("{} matches", result.match_count)),
                             ),
                     )
                     .child(
                         div()
                             .text_size(px(11.0))
-                            .text_color(gpui::hsla(0.0, 0.0, 0.4, 1.0))
+                            .text_color(colors::TEXT_DIM)
                             .text_ellipsis()
                             .child(result.first_line.clone()),
                     )

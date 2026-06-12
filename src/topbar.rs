@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use gpui::*;
 use gpui::prelude::FluentBuilder as _;
 
+use crate::app_theme::colors;
 use crate::workspace::LiteWorkspace;
 use crate::{
     CompareFiles, OpenFile, NewFile, SaveFile, ToggleFind, ToggleReplace,
@@ -21,9 +22,9 @@ pub(crate) fn render_toolbar(
         .h(px(32.0))
         .px(px(8.0))
         .gap(px(2.0))
-        .bg(gpui::hsla(0.0, 0.0, 0.12, 1.0))
+        .bg(colors::BG_RAISED)
         .border_b_1()
-        .border_color(gpui::hsla(0.0, 0.0, 0.15, 1.0))
+        .border_color(colors::BG_BORDER)
         .child(toolbar_btn("New", cx.listener(|this, _, window, cx| {
             this.handle_new(&NewFile, window, cx);
         })))
@@ -75,13 +76,13 @@ fn render_recent_menu(
         .py(px(4.0))
         .text_size(px(12.0))
         .text_color(if is_open {
-            gpui::hsla(0.0, 0.0, 0.9, 1.0)
+            colors::TEXT_PRIMARY
         } else {
-            gpui::hsla(0.0, 0.0, 0.7, 1.0)
+            colors::TEXT_DEFAULT
         })
         .hover(|s| {
-            s.bg(gpui::hsla(0.0, 0.0, 0.2, 1.0))
-                .text_color(gpui::hsla(0.0, 0.0, 0.9, 1.0))
+            s.bg(colors::BG_HOVER)
+                .text_color(colors::TEXT_PRIMARY)
         })
         .child("Recent")
         .on_click(cx.listener(|this, _, _, cx| {
@@ -103,11 +104,9 @@ fn render_recent_menu(
                                 .w(px(280.0))
                                 .max_h(px(400.0))
                                 .overflow_y_scroll()
-                                .bg(gpui::hsla(0.0, 0.0, 0.15, 1.0))
+                                .bg(colors::BG_PANEL)
                                 .border_1()
-                                .border_color(
-                                    gpui::hsla(0.0, 0.0, 0.25, 1.0),
-                                )
+                                .border_color(colors::BG_BORDER_STRONG)
                                 .rounded(px(4.0))
                                 .shadow_lg()
                                 .on_mouse_down_out(cx.listener(
@@ -122,9 +121,7 @@ fn render_recent_menu(
                                             .px(px(12.0))
                                             .py(px(8.0))
                                             .text_size(px(12.0))
-                                            .text_color(gpui::hsla(
-                                                0.0, 0.0, 0.5, 1.0,
-                                            ))
+                                            .text_color(colors::TEXT_SECONDARY)
                                             .child("No recent files"),
                                     )
                                 })
@@ -142,18 +139,13 @@ fn render_recent_menu(
                                                 .py(px(6.0))
                                                 .cursor_pointer()
                                                 .hover(|s| {
-                                                    s.bg(gpui::hsla(
-                                                        0.0, 0.0, 0.22, 1.0,
-                                                    ))
+                                                    s.bg(colors::BG_HOVER_DEEP)
                                                 })
                                                 .child(
                                                     div()
                                                         .text_size(px(13.0))
                                                         .text_color(
-                                                            gpui::hsla(
-                                                                0.0, 0.0, 0.9,
-                                                                1.0,
-                                                            ),
+                                                            colors::TEXT_PRIMARY,
                                                         )
                                                         .child(name),
                                                 )
@@ -161,10 +153,7 @@ fn render_recent_menu(
                                                     div()
                                                         .text_size(px(10.0))
                                                         .text_color(
-                                                            gpui::hsla(
-                                                                0.0, 0.0, 0.5,
-                                                                1.0,
-                                                            ),
+                                                            colors::TEXT_SECONDARY,
                                                         )
                                                         .text_ellipsis()
                                                         .child(dir),
@@ -204,8 +193,8 @@ fn toolbar_btn(
         .px(px(8.0))
         .py(px(4.0))
         .text_size(px(12.0))
-        .text_color(gpui::hsla(0.0, 0.0, 0.7, 1.0))
-        .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.2, 1.0)).text_color(gpui::hsla(0.0, 0.0, 0.9, 1.0)))
+        .text_color(colors::TEXT_DEFAULT)
+        .hover(|s| s.bg(colors::BG_HOVER).text_color(colors::TEXT_PRIMARY))
         .child(label)
         .on_click(handler)
 }
@@ -215,5 +204,5 @@ fn toolbar_separator() -> Div {
         .w(px(1.0))
         .h(px(16.0))
         .mx(px(4.0))
-        .bg(gpui::hsla(0.0, 0.0, 0.2, 1.0))
+        .bg(colors::BG_HOVER)
 }

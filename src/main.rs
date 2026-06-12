@@ -65,6 +65,8 @@ actions!(
         CompareFiles,
         /// Toggle the command center.
         ToggleCommandCenter,
+        /// Dismiss search bar or diff view.
+        Dismiss,
     ]
 );
 
@@ -118,6 +120,7 @@ fn main() {
     }
 
     let (ipc_sender, ipc_receiver) = std::sync::mpsc::channel::<IpcMessage>();
+    let ipc_receiver = std::sync::Arc::new(std::sync::Mutex::new(ipc_receiver));
 
     let app =
         Application::with_platform(gpui_linux::current_platform(false)).with_assets(assets::Assets);
@@ -138,6 +141,7 @@ fn main() {
         );
 
         cx.bind_keys(vec![
+            // Workspace actions
             KeyBinding::new("ctrl-n", NewFile, Some("LiteWorkspace")),
             KeyBinding::new("ctrl-o", OpenFile, Some("LiteWorkspace")),
             KeyBinding::new("ctrl-s", SaveFile, Some("LiteWorkspace")),
@@ -146,7 +150,7 @@ fn main() {
             KeyBinding::new("ctrl-h", ToggleReplace, Some("LiteWorkspace")),
             KeyBinding::new("f3", FindNext, Some("LiteWorkspace")),
             KeyBinding::new("shift-f3", FindPrevious, Some("LiteWorkspace")),
-            KeyBinding::new("escape", ToggleFind, Some("LiteWorkspace")),
+            KeyBinding::new("escape", Dismiss, Some("LiteWorkspace")),
             KeyBinding::new("alt-r", ToggleRegex, Some("LiteWorkspace")),
             KeyBinding::new("ctrl-shift-f", SearchAllTabs, Some("LiteWorkspace")),
             KeyBinding::new("ctrl-shift-s", SaveAll, Some("LiteWorkspace")),
@@ -154,6 +158,13 @@ fn main() {
             KeyBinding::new("ctrl-alt-d", CompareFiles, Some("LiteWorkspace")),
             KeyBinding::new("ctrl-shift-e", ReloadWithEncoding, Some("LiteWorkspace")),
             KeyBinding::new("alt-x", ToggleCommandCenter, Some("LiteWorkspace")),
+            // Editor actions — these use Zed's built-in editor actions
+            KeyBinding::new("ctrl-d", editor::actions::SelectNext::default(), Some("Editor")),
+            KeyBinding::new("ctrl-shift-d", editor::actions::DuplicateLineDown, Some("Editor")),
+            KeyBinding::new("ctrl-shift-k", editor::actions::DeleteLine, Some("Editor")),
+            KeyBinding::new("alt-up", editor::actions::MoveLineUp, Some("Editor")),
+            KeyBinding::new("alt-down", editor::actions::MoveLineDown, Some("Editor")),
+            KeyBinding::new("ctrl-/", editor::actions::ToggleComments::default(), Some("Editor")),
         ]);
 
         let user_keymap_path = utils::config_dir().join("keymap.json");
@@ -191,9 +202,15 @@ fn main() {
         let shared_state = cx.global::<OpenListener>().shared();
         cx.spawn(async move |cx| {
             loop {
-                cx.background_executor().timer(std::time::Duration::from_millis(200)).await;
-                let Ok(message) = ipc_receiver.try_recv() else {
-                    continue;
+                let receiver = ipc_receiver.clone();
+                let message = cx
+                    .background_executor()
+                    .spawn(async move {
+                        receiver.lock().unwrap().recv()
+                    })
+                    .await;
+                let Ok(message) = message else {
+                    break;
                 };
                 let Some(handle) = *shared_state.workspace_handle.lock().unwrap() else {
                     continue;
@@ -226,6 +243,9 @@ fn main() {
                                 }
                                 "lite_editor::ToggleFind" => {
                                     _workspace.handle_toggle_find(&ToggleFind, window, cx);
+                                }
+                                "lite_editor::Dismiss" => {
+                                    _workspace.handle_dismiss(&Dismiss, window, cx);
                                 }
                                 "lite_editor::FindNext" => {
                                     _workspace.handle_find_next(&FindNext, window, cx);
@@ -403,25 +423,7 @@ fn friendly_name_to_qualified(input: &str) -> String {
 fn register_languages(languages: &Arc<LanguageRegistry>) {
     languages.register_native_grammars(grammars::native_grammars());
 
-    let language_names = [
-        "bash",
-        "c",
-        "cpp",
-        "css",
-        "diff",
-        "go",
-        "json",
-        "jsonc",
-        "markdown",
-        "python",
-        "regex",
-        "rust",
-        "tsx",
-        "typescript",
-        "yaml",
-    ];
-
-    for name in language_names {
+    for name in crate::utils::GRAMMAR_NAMES {
         let config = grammars::load_config_for_feature(name, true);
         let grammar_name = config.grammar.clone();
         let matcher = config.matcher.clone();

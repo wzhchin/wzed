@@ -37,6 +37,19 @@ pub(crate) fn format_action_name(name: &str) -> String {
     result
 }
 
+/// Grammar identifiers for language registration, command center, and IPC.
+/// Add new languages here — all consumers reference this single list.
+pub(crate) const GRAMMAR_NAMES: &[&str] = &[
+    "bash", "c", "cpp", "css", "diff", "go", "json", "jsonc", "markdown",
+    "python", "regex", "rust", "tsx", "typescript", "yaml",
+];
+
+/// Human-readable display names matching [`GRAMMAR_NAMES`] 1:1.
+pub(crate) const GRAMMAR_DISPLAY_NAMES: &[&str] = &[
+    "Bash", "C", "C++", "CSS", "Diff", "Go", "JSON", "JSONC", "Markdown",
+    "Python", "Regex", "Rust", "TSX", "TypeScript", "YAML",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
