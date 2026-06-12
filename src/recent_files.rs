@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use anyhow::{Context as _, Result};
+
 pub(crate) struct RecentFiles {
     pub entries: Vec<PathBuf>,
     max_entries: usize,
@@ -35,14 +37,20 @@ impl RecentFiles {
 
     pub(crate) fn load_from_disk() -> Self {
         let path = crate::utils::config_dir().join("recent.json");
-        let entries = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
-            .map(|v| v.into_iter().map(PathBuf::from).collect())
-            .unwrap_or_default();
+        let entries = (|| -> Result<Vec<PathBuf>, anyhow::Error> {
+            let content = std::fs::read_to_string(&path)
+                .with_context(|| format!("failed to read recent files from {}", path.display()))?;
+            let paths: Vec<String> = serde_json::from_str(&content)
+                .with_context(|| "failed to parse recent files")?;
+            Ok(paths.into_iter().map(PathBuf::from).collect())
+        })()
+        .unwrap_or_else(|err| {
+            eprintln!("{err:#}");
+            Vec::new()
+        });
         Self {
             entries,
-            max_entries: 20,
+            max_entries: crate::utils::AppConfig::MAX_RECENT_FILES,
         }
     }
 }

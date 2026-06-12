@@ -1,7 +1,10 @@
 use gpui::*;
 use similar::{ChangeTag, TextDiff};
+use util::ResultExt;
 
 use crate::app_theme::colors;
+use crate::tab::Tab;
+use crate::utils;
 
 pub(crate) struct DiffState {
     pub left_title: SharedString,
@@ -20,6 +23,51 @@ pub(crate) enum DiffLineKind {
     Normal,
     Added,
     Removed,
+}
+
+/// Prompt for a file and show side-by-side diff against the given tab.
+pub(crate) fn start_file_comparison(
+    active_tab: &Tab,
+    cx: &mut Context<crate::workspace::LiteWorkspace>,
+) {
+    let left_text = active_tab.editor.read(cx).text(cx).to_string();
+    let left_title = active_tab.title.clone();
+
+    let receiver = cx.prompt_for_paths(PathPromptOptions {
+        files: true,
+        directories: false,
+        multiple: false,
+        prompt: Some("Compare".into()),
+    });
+
+    cx.spawn(async move |this, cx| {
+        let paths = match receiver.await {
+            Ok(Ok(Some(paths))) => paths,
+            _ => return,
+        };
+        let right_path = match paths.into_iter().next() {
+            Some(p) => p,
+            None => return,
+        };
+
+        let right_text = match std::fs::read_to_string(&right_path) {
+            Ok(t) => t,
+            Err(err) => {
+                eprintln!("failed to read file for comparison: {err:#}");
+                return;
+            }
+        };
+        let right_title: SharedString = utils::file_name_from_path(&right_path).into();
+
+        let diff = compute_diff(&left_text, &right_text, left_title, right_title);
+
+        this.update(cx, |this, cx| {
+            this.diff_state = Some(diff);
+            cx.notify();
+        })
+        .log_err();
+    })
+    .detach();
 }
 
 pub(crate) fn compute_diff(

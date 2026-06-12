@@ -27,6 +27,7 @@ pub(crate) struct SearchState {
     pub matches: Vec<std::ops::Range<usize>>,
     pub current_match: Option<usize>,
     pub tab_results: Vec<TabSearchResult>,
+    pub last_error: Option<String>,
 }
 
 impl SearchState {
@@ -43,6 +44,7 @@ impl SearchState {
             matches: Vec::new(),
             current_match: None,
             tab_results: Vec::new(),
+            last_error: None,
         }
     }
 
@@ -230,7 +232,13 @@ impl SearchState {
         }
 
         let regex = if self.use_regex {
-            regex::Regex::new(&query).ok()
+            match regex::Regex::new(&query) {
+                Ok(re) => Some(re),
+                Err(err) => {
+                    self.last_error = Some(format!("Invalid regex: {err}"));
+                    return;
+                }
+            }
         } else {
             None
         };

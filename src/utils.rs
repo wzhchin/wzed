@@ -44,6 +44,17 @@ pub(crate) const GRAMMAR_NAMES: &[&str] = &[
     "python", "regex", "rust", "tsx", "typescript", "yaml",
 ];
 
+/// Centralized tunable constants. Single source of truth for all magic numbers.
+pub(crate) struct AppConfig;
+
+impl AppConfig {
+    pub const AUTOSAVE_INTERVAL_SECS: u64 = 30;
+    pub const FILE_WATCHER_POLL_SECS: u64 = 5;
+    pub const NOTIFICATION_DISPLAY_SECS: u64 = 4;
+    pub const SNAPSHOT_RETENTION_DAYS: u64 = 7;
+    pub const MAX_RECENT_FILES: usize = 20;
+}
+
 /// Human-readable display names matching [`GRAMMAR_NAMES`] 1:1.
 pub(crate) const GRAMMAR_DISPLAY_NAMES: &[&str] = &[
     "Bash", "C", "C++", "CSS", "Diff", "Go", "JSON", "JSONC", "Markdown",

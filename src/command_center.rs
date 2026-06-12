@@ -163,7 +163,9 @@ impl LiteWorkspace {
             }
             CommandSubmenu::RecentFiles => {
                 if let Some(path) = self.recent_files.entries.get(index).cloned() {
-                    self.open_file_path(path, window, cx).ok();
+                    if let Err(err) = self.open_file_path(path, window, cx) {
+                        self.show_notification(format!("Failed to open file: {err:#}"), cx);
+                    }
                 }
             }
         }

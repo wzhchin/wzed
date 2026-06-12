@@ -250,7 +250,9 @@ fn main() {
                         IpcMessage::OpenFiles(paths) => {
                             for path in &paths {
                                 if path.exists() {
-                                    _workspace.open_file_path(path.clone(), window, cx).ok();
+                                    if let Err(err) = _workspace.open_file_path(path.clone(), window, cx) {
+                                        eprintln!("IPC: failed to open file {}: {err:#}", path.display());
+                                    }
                                 }
                             }
                         }
@@ -342,7 +344,7 @@ fn main() {
                             }
                         }
                     }
-                }).ok();
+                }).log_err();
             }
         }).detach();
 
@@ -381,7 +383,9 @@ fn main() {
 
                     for path in &file_args {
                         if path.exists() {
-                            workspace.open_file_path(path.clone(), window, cx).ok();
+                            if let Err(err) = workspace.open_file_path(path.clone(), window, cx) {
+                                eprintln!("failed to open file {}: {err:#}", path.display());
+                            }
                         }
                     }
                     workspace.save_session(cx);
@@ -408,7 +412,7 @@ fn main() {
             if let Some(handle) = listener.workspace_handle() {
                 handle.read_with(cx, |workspace, cx| {
                     workspace::save_session_from_outside(workspace, cx);
-                }).ok();
+                }).log_err();
             }
             std::future::ready(())
         })

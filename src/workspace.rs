@@ -9,6 +9,7 @@ use gpui::ExternalPaths;
 use gpui::prelude::FluentBuilder as _;
 use language::{Buffer, LanguageRegistry};
 use serde::{Deserialize, Serialize};
+use util::ResultExt;
 
 use crate::tab::{self, Tab};
 use crate::file_watcher::FileWatcher;
@@ -97,12 +98,14 @@ fn prune_old_snapshots() {
     let Ok(entries) = std::fs::read_dir(&snapshots_dir) else {
         return;
     };
-    let cutoff = std::time::SystemTime::now() - std::time::Duration::from_secs(7 * 24 * 3600);
+    let cutoff = std::time::SystemTime::now() - std::time::Duration::from_secs(utils::AppConfig::SNAPSHOT_RETENTION_DAYS * 24 * 3600);
     for entry in entries.flatten() {
         let Ok(metadata) = entry.metadata() else { continue };
         if let Ok(modified) = metadata.modified() {
             if modified < cutoff {
-                std::fs::remove_file(entry.path()).ok();
+                if let Err(err) = std::fs::remove_file(entry.path()) {
+                    eprintln!("failed to remove old snapshot: {err:#}");
+                }
             }
         }
     }
@@ -124,7 +127,7 @@ pub(crate) struct LiteWorkspace {
     pub(crate) command_center_editor: Entity<Editor>,
     pub(crate) command_center_selected: usize,
     pub(crate) command_submenu: Option<command_center::CommandSubmenu>,
-    diff_state: Option<diff_view::DiffState>,
+    pub(crate) diff_state: Option<diff_view::DiffState>,
     pub(crate) show_tab_context_menu: bool,
     pub(crate) context_menu_tab: Option<usize>,
     pub(crate) tab_context_menu_is_pinned: bool,
@@ -182,7 +185,7 @@ impl LiteWorkspace {
 
         cx.spawn(async move |this, cx| {
             loop {
-                cx.background_executor().timer(std::time::Duration::from_secs(30)).await;
+                cx.background_executor().timer(std::time::Duration::from_secs(utils::AppConfig::AUTOSAVE_INTERVAL_SECS)).await;
                 let Ok(()) = this.update(cx, |this, cx| {
                     this.handle_autosave(&AutosaveTimer, cx);
                 }) else {
@@ -194,7 +197,7 @@ impl LiteWorkspace {
 
         cx.spawn(async move |this, cx| {
             loop {
-                cx.background_executor().timer(std::time::Duration::from_secs(5)).await;
+                cx.background_executor().timer(std::time::Duration::from_secs(utils::AppConfig::FILE_WATCHER_POLL_SECS)).await;
                 let Ok(()) = this.update_in(cx, |this, window, cx| {
                     let changed = this.file_watcher.check_for_changes(&mut this.tabs, cx);
                     for idx in changed {
@@ -214,13 +217,13 @@ impl LiteWorkspace {
         self.notification = Some((message.into(), std::time::Instant::now()));
         cx.notify();
         cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(std::time::Duration::from_secs(4)).await;
+            cx.background_executor().timer(std::time::Duration::from_secs(utils::AppConfig::NOTIFICATION_DISPLAY_SECS)).await;
             this.update(cx, |this, cx| {
-                if this.notification.as_ref().is_some_and(|(_, t)| t.elapsed().as_secs() >= 4) {
+                if this.notification.as_ref().is_some_and(|(_, t)| t.elapsed().as_secs() >= utils::AppConfig::NOTIFICATION_DISPLAY_SECS) {
                     this.notification = None;
                     cx.notify();
                 }
-            }).ok();
+            }).log_err();
         }).detach();
     }
 
@@ -492,9 +495,11 @@ impl LiteWorkspace {
             };
             this.update_in(cx, |this, window, cx| {
                 for path in result {
-                    this.open_file_path(path, window, cx).ok();
+                    if let Err(err) = this.open_file_path(path, window, cx) {
+                        this.show_notification(format!("Failed to open file: {err:#}"), cx);
+                    }
                 }
-            }).ok();
+            }).log_err();
         }).detach();
     }
 
@@ -527,7 +532,7 @@ impl LiteWorkspace {
                     eprintln!("failed to save as: {err:#}");
                     this.show_notification(format!("Save failed: {err:#}"), cx);
                 }
-            }).ok();
+            }).log_err();
         }).detach();
     }
 
@@ -845,45 +850,10 @@ impl LiteWorkspace {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let left_text = self.tabs[self.active].editor.read(cx).text(cx).to_string();
-        let left_title = self.tabs[self.active].title.clone();
-
-        let receiver = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some("Compare".into()),
-        });
-
-        cx.spawn(async move |this, cx| {
-            let paths = match receiver.await {
-                Ok(Ok(Some(paths))) => paths,
-                _ => return,
-            };
-            let right_path = match paths.into_iter().next() {
-                Some(p) => p,
-                None => return,
-            };
-
-            let right_text = match std::fs::read_to_string(&right_path) {
-                Ok(t) => t,
-                Err(err) => {
-                    eprintln!("failed to read file for comparison: {err:#}");
-                    return;
-                }
-            };
-            let right_title: SharedString = utils::file_name_from_path(&right_path).into();
-
-            let diff =
-                diff_view::compute_diff(&left_text, &right_text, left_title, right_title);
-
-            this.update(cx, |this, cx| {
-                this.diff_state = Some(diff);
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
+        diff_view::start_file_comparison(
+            &self.tabs[self.active],
+            cx,
+        );
     }
 }
 
@@ -1024,47 +994,7 @@ impl Render for LiteWorkspace {
                     })),
             );
 
-        let encoding_label = encoding::encoding_label(active_tab.encoding);
-        let status_bar = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .w_full()
-            .h(px(24.0))
-            .px(px(12.0))
-            .bg(colors::BG_DEEPEST)
-            .border_t_1()
-            .border_color(colors::BG_BORDER)
-            .child(
-                div()
-                    .text_size(px(12.0))
-                    .text_color(colors::TEXT_MUTED)
-                    .child(active_tab.title.clone()),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(12.0))
-                    .child(
-                        div()
-                            .text_size(px(12.0))
-                            .text_color(colors::TEXT_SECONDARY)
-                            .child(encoding_label),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(12.0))
-                            .text_color(colors::TEXT_SECONDARY)
-                            .child(format!(
-                                "Tab {} of {}",
-                                self.active + 1,
-                                self.tabs.len()
-                            )),
-                    ),
-            );
+        let status_bar = topbar::render_status_bar(active_tab, self.active, self.tabs.len());
 
         let search_bar = crate::search::render_search_bar(self, cx).map(|el| el.into_any_element());
         let multi_tab_results = crate::search::render_multi_tab_results(self, cx);
@@ -1138,9 +1068,9 @@ impl Render for LiteWorkspace {
                 el.child(command_center::render_command_center(self, _window, cx))
             })
             .when(
-                self.notification.as_ref().is_some_and(|(_, instant)| instant.elapsed().as_secs() < 4),
+                self.notification.as_ref().is_some_and(|(_, instant)| instant.elapsed().as_secs() < utils::AppConfig::NOTIFICATION_DISPLAY_SECS),
                 |el| {
-                    let msg = self.notification.as_ref().unwrap().0.clone();
+                    let msg = self.notification.as_ref().map(|(m, _)| m.clone()).unwrap_or_default();
                     el.child(
                         div()
                             .absolute()
@@ -1163,7 +1093,9 @@ impl Render for LiteWorkspace {
             .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
                 for path in paths.paths() {
                     if path.is_file() {
-                        this.open_file_path(path.clone(), window, cx).ok();
+                        if let Err(err) = this.open_file_path(path.clone(), window, cx) {
+                            this.show_notification(format!("Failed to open file: {err:#}"), cx);
+                        }
                     }
                 }
             }))

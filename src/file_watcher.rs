@@ -33,9 +33,13 @@ impl FileWatcher {
                 continue;
             }
 
-            let modified = std::fs::metadata(path)
-                .ok()
-                .and_then(|m| m.modified().ok());
+            let modified = match std::fs::metadata(path) {
+                Ok(m) => m.modified().ok(),
+                Err(err) => {
+                    eprintln!("file watcher: failed to read metadata for {}: {err:#}", path.display());
+                    continue;
+                }
+            };
 
             let entry = self.watched.iter().find(|w| w.path == *path);
             let needs_check = match entry {
@@ -71,9 +75,13 @@ impl FileWatcher {
     }
 
     pub(crate) fn update_mtime(&mut self, path: &PathBuf) {
-        let modified = std::fs::metadata(path)
-            .ok()
-            .and_then(|m| m.modified().ok());
+        let modified = match std::fs::metadata(path) {
+            Ok(m) => m.modified().ok(),
+            Err(err) => {
+                eprintln!("file watcher: failed to read metadata for {}: {err:#}", path.display());
+                return;
+            }
+        };
         if let Some(entry) = self.watched.iter_mut().find(|w| w.path == *path) {
             entry.last_modified = modified;
         } else {

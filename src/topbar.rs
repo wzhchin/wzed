@@ -5,6 +5,7 @@ use gpui::prelude::FluentBuilder as _;
 
 use crate::app_theme::colors;
 use crate::workspace::LiteWorkspace;
+use crate::tab::Tab;
 use crate::{
     CompareFiles, OpenFile, NewFile, SaveFile, ToggleFind, ToggleReplace,
 };
@@ -165,12 +166,16 @@ fn render_recent_menu(
                                                           cx| {
                                                         this.show_recent_menu =
                                                             false;
-                                                        this.open_file_path(
+                                                        if let Err(err) = this.open_file_path(
                                                             path.clone(),
                                                             window,
                                                             cx,
-                                                        )
-                                                        .ok();
+                                                        ) {
+                                                        this.show_notification(
+                                                            format!("Failed to open file: {err:#}"),
+                                                            cx,
+                                                        );
+                                                    }
                                                     },
                                                 ))
                                         },
@@ -205,4 +210,44 @@ fn toolbar_separator() -> Div {
         .h(px(16.0))
         .mx(px(4.0))
         .bg(colors::BG_HOVER)
+}
+
+pub(crate) fn render_status_bar(tab: &Tab, active: usize, tab_count: usize) -> Div {
+    let encoding_label = crate::encoding::encoding_label(tab.encoding);
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_between()
+        .w_full()
+        .h(px(24.0))
+        .px(px(12.0))
+        .bg(colors::BG_DEEPEST)
+        .border_t_1()
+        .border_color(colors::BG_BORDER)
+        .child(
+            div()
+                .text_size(px(12.0))
+                .text_color(colors::TEXT_MUTED)
+                .child(tab.title.clone()),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(12.0))
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(colors::TEXT_SECONDARY)
+                        .child(encoding_label),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(colors::TEXT_SECONDARY)
+                        .child(format!("Tab {} of {}", active + 1, tab_count)),
+                ),
+        )
 }
