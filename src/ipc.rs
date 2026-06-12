@@ -36,11 +36,20 @@ impl OpenListener {
     }
 
     pub(crate) fn set_workspace(&self, handle: WindowHandle<LiteWorkspace>) {
-        *self.0.workspace_handle.lock().unwrap() = Some(handle);
+        match self.0.workspace_handle.lock() {
+            Ok(mut guard) => *guard = Some(handle),
+            Err(err) => eprintln!("IPC lock poisoned: {err}"),
+        }
     }
 
     pub(crate) fn workspace_handle(&self) -> Option<WindowHandle<LiteWorkspace>> {
-        *self.0.workspace_handle.lock().unwrap()
+        match self.0.workspace_handle.lock() {
+            Ok(guard) => *guard,
+            Err(err) => {
+                eprintln!("IPC lock poisoned: {err}");
+                None
+            }
+        }
     }
 
     pub(crate) fn sender(&self) -> std::sync::mpsc::Sender<IpcMessage> {
@@ -144,7 +153,9 @@ pub(crate) fn listen_for_instances(sender: std::sync::mpsc::Sender<IpcMessage>) 
     })
         && e.kind() == std::io::ErrorKind::ConnectionRefused
     {
-        let _ = std::fs::remove_file(&sock_path);
+        if let Err(err) = std::fs::remove_file(&sock_path) {
+            eprintln!("could not remove stale IPC socket: {err}");
+        }
     }
 
     let listener = UnixDatagram::bind(&sock_path)
@@ -156,7 +167,10 @@ pub(crate) fn listen_for_instances(sender: std::sync::mpsc::Sender<IpcMessage>) 
             if let Ok(len) = listener.recv(&mut buf) {
                 let text = String::from_utf8_lossy(&buf[..len]);
                 if let Some(message) = parse_ipc_message(&text) {
-                    let _ = sender.send(message);
+                    if let Err(err) = sender.send(message) {
+                        eprintln!("IPC channel closed, stopping listener: {err}");
+                        return;
+                    }
                 }
             }
         }
@@ -245,7 +259,10 @@ pub(crate) fn listen_for_instances(sender: std::sync::mpsc::Sender<IpcMessage>) 
                 if let Ok(len) = stream.read(&mut buf) {
                     let text = String::from_utf8_lossy(&buf[..len]);
                     if let Some(message) = parse_ipc_message(&text) {
-                        let _ = sender.send(message);
+                        if let Err(err) = sender.send(message) {
+                        eprintln!("IPC channel closed, stopping listener: {err}");
+                        return;
+                    }
                     }
                 }
             }

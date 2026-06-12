@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui::*;
+use util::ResultExt;
 use theme::ActiveTheme;
 use language::{LanguageRegistry, LoadedLanguage};
 use editor::EditorSettings;
@@ -137,7 +138,9 @@ fn main() {
         theme::set_theme_settings_provider(Box::new(WzedThemeSettings::new()), cx);
 
         cx.bind_keys(
-            KeymapFile::load_asset_allow_partial_failure(DEFAULT_KEYMAP_PATH, cx).unwrap(),
+            KeymapFile::load_asset_allow_partial_failure(DEFAULT_KEYMAP_PATH, cx)
+                .log_err()
+                .unwrap_or_default(),
         );
 
         cx.bind_keys(vec![
@@ -206,13 +209,26 @@ fn main() {
                 let message = cx
                     .background_executor()
                     .spawn(async move {
-                        receiver.lock().unwrap().recv()
+                        match receiver.lock() {
+                            Ok(guard) => guard.recv(),
+                            Err(err) => {
+                                eprintln!("IPC lock poisoned: {err}");
+                                Err(std::sync::mpsc::RecvError)
+                            }
+                        }
                     })
                     .await;
                 let Ok(message) = message else {
                     break;
                 };
-                let Some(handle) = *shared_state.workspace_handle.lock().unwrap() else {
+                let handle = match shared_state.workspace_handle.lock() {
+                    Ok(guard) => *guard,
+                    Err(err) => {
+                        eprintln!("IPC lock poisoned: {err}");
+                        continue;
+                    }
+                };
+                let Some(handle) = handle else {
                     continue;
                 };
                 handle.update(cx, |_workspace, window, cx| {

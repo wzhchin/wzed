@@ -12,6 +12,8 @@ cargo run -- -c "new-file"     # send IPC command to running instance
 
 No Rust tests. Manual integration testing via `test-step.md`.
 
+Unit tests exist in `utils.rs` (23), `encoding.rs` (6), `recent_files.rs` (4) — run with `cargo test`. Core UI modules are untested.
+
 ## Architecture
 
 基于 Zed GPUI 框架的**最精简**文本编辑器，依赖 `../zed` 中的核心 crate（editor, gpui, language, theme 等）。单 binary、单窗口、~3700 行、12 个源文件。不需要任何 debug 功能（断点、终端、调试器等），只做纯文本编辑。
