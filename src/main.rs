@@ -12,6 +12,8 @@ mod utils;
 mod workspace;
 
 use std::path::PathBuf;
+#[cfg(windows)]
+use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::*;
@@ -123,8 +125,20 @@ fn main() {
     let (ipc_sender, ipc_receiver) = std::sync::mpsc::channel::<IpcMessage>();
     let ipc_receiver = std::sync::Arc::new(std::sync::Mutex::new(ipc_receiver));
 
-    let app =
-        Application::with_platform(gpui_linux::current_platform(false)).with_assets(assets::Assets);
+    let platform = {
+        #[cfg(unix)]
+        {
+            gpui_linux::current_platform(false)
+        }
+        #[cfg(windows)]
+        {
+            Rc::new(
+                gpui_windows::WindowsPlatform::new(false)
+                    .expect("failed to initialize Windows platform"),
+            ) as Rc<dyn gpui::Platform>
+        }
+    };
+    let app = Application::with_platform(platform).with_assets(assets::Assets);
 
     app.run(move |cx: &mut App| {
         settings::init(cx);

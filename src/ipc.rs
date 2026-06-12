@@ -237,16 +237,29 @@ pub(crate) fn try_send_command_to_existing_instance(command: &str) -> bool {
 #[cfg(windows)]
 pub(crate) fn listen_for_instances(sender: std::sync::mpsc::Sender<IpcMessage>) -> Result<()> {
     use std::io::Read as _;
-    use std::net::TcpListener;
+    use std::net::{TcpListener, TcpStream};
     use std::thread;
+
+    let lock_path = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("wzed.port");
+
+    if let Ok(port_str) = std::fs::read_to_string(&lock_path) {
+        if let Ok(port) = port_str.trim().parse::<u16>() {
+            if TcpStream::connect(format!("127.0.0.1:{port}")).is_err() {
+                if let Err(err) = std::fs::remove_file(&lock_path) {
+                    eprintln!("could not remove stale port lock: {err}");
+                }
+            } else {
+                anyhow::bail!("another WZed instance is already running on port {port}");
+            }
+        }
+    }
 
     let listener = TcpListener::bind("127.0.0.1:0")
         .context("failed to bind IPC listener")?;
     let port = listener.local_addr()?.port();
 
-    let lock_path = dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("wzed.port");
     if let Some(parent) = lock_path.parent() {
         std::fs::create_dir_all(parent)?;
     }

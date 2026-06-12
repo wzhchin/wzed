@@ -21,7 +21,8 @@ Single binary, single window, ~4200 lines of Rust. No debugger, no terminal, no 
 
 - Rust toolchain (edition 2024)
 - A local checkout of the [Zed](https://github.com/zed-industries/zed) repository at `../zed`
-- Linux (primary) or Windows
+- **Linux**: no additional requirements
+- **Windows**: MSVC toolchain (`x86_64-pc-windows-msvc`) and [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
 
 ## Build & Run
 

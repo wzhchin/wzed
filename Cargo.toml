@@ -17,7 +17,6 @@ settings = { path = "../zed/crates/settings" }
 assets = { path = "../zed/crates/assets" }
 text = { path = "../zed/crates/text" }
 gpui = { path = "../zed/crates/gpui" }
-gpui_linux = { path = "../zed/crates/gpui_linux" }
 fs = { path = "../zed/crates/fs" }
 clock = { path = "../zed/crates/clock" }
 util = { path = "../zed/crates/util" }
@@ -29,3 +28,9 @@ serde_json = "1.0.150"
 chardetng = "0.1"
 encoding_rs = "0.8"
 similar = "2"
+
+[target.'cfg(unix)'.dependencies]
+gpui_linux = { path = "../zed/crates/gpui_linux" }
+
+[target.'cfg(windows)'.dependencies]
+gpui_windows = { path = "../zed/crates/gpui_windows" }

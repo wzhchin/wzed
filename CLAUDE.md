@@ -39,5 +39,6 @@ Unit tests exist in `utils.rs` (23), `encoding.rs` (6), `recent_files.rs` (4) â€
 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the current plan
+shell commands, and other important information, read the current plan:
+`specs/001-windows-support/plan.md`
 <!-- SPECKIT END -->
