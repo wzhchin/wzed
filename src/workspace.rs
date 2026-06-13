@@ -128,7 +128,6 @@ pub(crate) struct LiteWorkspace {
     pub(crate) tabs: Vec<Tab>,
     pub active: usize,
     pub(crate) languages: Arc<LanguageRegistry>,
-    pub(crate) focus_handle: FocusHandle,
     pub search: SearchState,
     show_toolbar: bool,
     file_watcher: FileWatcher,
@@ -161,14 +160,12 @@ impl LiteWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let focus_handle = cx.focus_handle();
         let search = SearchState::new(window, cx);
 
         let this = Self {
             tabs: Vec::new(),
             active: 0,
             languages,
-            focus_handle,
             search,
             show_toolbar: true,
             file_watcher: FileWatcher::new(),
