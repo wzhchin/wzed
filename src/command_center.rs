@@ -127,16 +127,37 @@ impl LiteWorkspace {
             }
             CommandSubmenu::ChangeEncoding => {
                 let encodings = crate::encoding::SUPPORTED_ENCODINGS;
-                if let Some(&label) = encodings.get(index)
-                    && let Some(enc) = crate::encoding::encoding_from_label(label)
-                    && let Some(path) = self.tabs[self.active].path.clone()
-                    && let Ok(content) = crate::encoding::read_file_as_encoding(&path, enc)
-                {
-                    let tab = &mut self.tabs[self.active];
-                    tab.encoding = enc;
-                    tab.editor.update(cx, |editor, cx| {
-                        editor.set_text(content.as_str(), window, cx);
-                    });
+                let Some(&label) = encodings.get(index) else {
+                    cx.notify();
+                    return;
+                };
+                let Some(enc) = crate::encoding::encoding_from_label(label) else {
+                    cx.notify();
+                    return;
+                };
+                let tab = &self.tabs[self.active];
+                if tab.path.is_none() {
+                    self.show_notification("No file to reload", cx);
+                    cx.notify();
+                    return;
+                }
+                if tab.is_dirty(cx) {
+                    self.show_notification("Save changes before switching encoding", cx);
+                    cx.notify();
+                    return;
+                }
+                let path = tab.path.clone().unwrap_or_default();
+                match crate::encoding::read_file_as_encoding(&path, enc) {
+                    Ok(content) => {
+                        let tab = &mut self.tabs[self.active];
+                        tab.encoding = enc;
+                        tab.editor.update(cx, |editor, cx| {
+                            editor.set_text(content.as_str(), window, cx);
+                        });
+                    }
+                    Err(err) => {
+                        self.show_notification(format!("Failed to reload: {err:#}"), cx);
+                    }
                 }
                 cx.notify();
             }
@@ -206,6 +227,9 @@ pub(crate) fn render_command_center(
     };
     let submenu_clone = this.command_submenu.clone();
     let is_submenu = this.command_submenu.is_some();
+    let current_encoding_label = this.tabs.get(this.active).map(|tab| {
+        crate::encoding::encoding_label(tab.encoding).to_string()
+    });
 
     let all_commands = collect_commands(cx);
 
@@ -372,6 +396,13 @@ pub(crate) fn render_command_center(
                                 let is_selected = i == selected;
                                 let cmd_text = cmd.clone();
                                 let click_idx = *cmd_idx;
+                                let is_current = matches!(&this.command_submenu, Some(CommandSubmenu::ChangeEncoding))
+                                    && current_encoding_label.as_deref() == Some(cmd.as_str());
+                                let display_text = if is_current {
+                                    format!("● {cmd_text}")
+                                } else {
+                                    cmd_text.clone()
+                                };
                                 div()
                                     .id(ElementId::Name(
                                         format!("cmd-{cmd_idx}").into(),
@@ -391,7 +422,7 @@ pub(crate) fn render_command_center(
                                     .hover(|s| {
                                         s.bg(colors::ACCENT_HOVER)
                                     })
-                                    .child(cmd_text.clone())
+                                    .child(display_text)
                                     .on_click({
                                         let sub = submenu_clone.clone();
                                         let click_cmds = all_commands.clone();

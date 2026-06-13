@@ -24,7 +24,7 @@ use crate::app_theme::colors;
 
 use crate::{
     AutosaveTimer, CloseTab, CompareFiles, Dismiss, FindNext, FindPrevious, MoveToGroup,
-    NewFile, OpenFile, ReloadWithEncoding, ReplaceAll, ReplaceNext, SaveAll,
+    NewFile, OpenFile, SwitchEncoding, ReplaceAll, ReplaceNext, SaveAll,
     SaveFile, SearchAllTabs, ToggleFind, ToggleRegex,
     ToggleReplace, ToggleToolbar,
 };
@@ -44,6 +44,7 @@ struct SessionTab {
     path: Option<String>,
     unsaved_content: Option<String>,
     pinned: bool,
+    encoding: Option<String>,
 }
 
 fn save_session(workspace: &LiteWorkspace, cx: &App) {
@@ -65,6 +66,11 @@ fn save_session(workspace: &LiteWorkspace, cx: &App) {
                 path: tab.path.as_ref().map(|p| p.to_string_lossy().into_owned()),
                 unsaved_content,
                 pinned: tab.pinned,
+                encoding: if tab.encoding != encoding_rs::UTF_8 {
+                    Some(encoding::encoding_label(tab.encoding).to_string())
+                } else {
+                    None
+                },
             }
         })
         .collect();
@@ -275,6 +281,7 @@ impl LiteWorkspace {
 
         for (i, tab) in state.tabs.into_iter().enumerate() {
             let was_pinned = tab.pinned;
+            let stored_encoding = tab.encoding.as_deref().and_then(encoding::encoding_from_label);
             match tab.path {
                 Some(path_str) => {
                     let path = PathBuf::from(&path_str);
@@ -282,7 +289,15 @@ impl LiteWorkspace {
                         if self.open_file_path(path.clone(), window, cx).is_err() {
                             continue;
                         }
-                        if let Some(content) = tab.unsaved_content {
+                        if let Some(enc) = stored_encoding {
+                            let last_idx = self.tabs.len() - 1;
+                            if let Ok(content) = encoding::read_file_as_encoding(&path, enc) {
+                                self.tabs[last_idx].encoding = enc;
+                                self.tabs[last_idx].editor.update(cx, |editor, cx| {
+                                    editor.set_text(content.as_str(), window, cx);
+                                });
+                            }
+                        } else if let Some(content) = tab.unsaved_content {
                             let last_idx = self.tabs.len() - 1;
                             self.tabs[last_idx].editor.update(cx, |editor, cx| {
                                 editor.set_text(content.as_str(), window, cx);
@@ -298,6 +313,11 @@ impl LiteWorkspace {
                             window,
                             cx,
                         ));
+                        if let Some(enc) = stored_encoding
+                            && let Some(last_tab) = self.tabs.last_mut()
+                        {
+                            last_tab.encoding = enc;
+                        }
                     }
                 }
                 None => {
@@ -832,35 +852,19 @@ impl LiteWorkspace {
         cx.notify();
     }
 
-    pub(crate) fn handle_reload_encoding(
+    pub(crate) fn handle_switch_encoding(
         &mut self,
-        _action: &ReloadWithEncoding,
+        _action: &SwitchEncoding,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let tab = &self.tabs[self.active];
-        let Some(path) = tab.path.clone() else { return };
-        let current = tab.encoding;
-        let current_idx = encoding::SUPPORTED_ENCODINGS
-            .iter()
-            .position(|e| *e == encoding::encoding_label(current))
-            .unwrap_or(0);
-        let next_idx = (current_idx + 1) % encoding::SUPPORTED_ENCODINGS.len();
-        let label = encoding::SUPPORTED_ENCODINGS[next_idx];
-        let Some(enc) = encoding::encoding_from_label(label) else { return };
-        let content = match encoding::read_file_as_encoding(&path, enc) {
-            Ok(c) => c,
-            Err(err) => {
-                eprintln!("failed to reload with encoding {label}: {err:#}");
-                self.show_notification(format!("Failed to reload: {err:#}"), cx);
-                return;
-            }
-        };
-        let tab = &mut self.tabs[self.active];
-        tab.encoding = enc;
-        tab.editor.update(cx, |editor, cx| {
-            editor.set_text(content.as_str(), window, cx);
+        self.show_command_center = true;
+        self.command_submenu = Some(crate::command_center::CommandSubmenu::ChangeEncoding);
+        self.command_center_editor.update(cx, |editor, cx| {
+            editor.set_text("", window, cx);
         });
+        self.command_center_selected = 0;
+        self.command_center_editor.focus_handle(cx).focus(window, cx);
         cx.notify();
     }
 
@@ -1086,7 +1090,7 @@ impl Render for LiteWorkspace {
             .on_action(cx.listener(Self::handle_save_all))
             .on_action(cx.listener(Self::handle_toggle_toolbar))
             .on_action(cx.listener(Self::handle_move_to_group))
-            .on_action(cx.listener(Self::handle_reload_encoding))
+            .on_action(cx.listener(Self::handle_switch_encoding))
             .on_action(cx.listener(Self::handle_compare_files))
             .on_action(cx.listener(Self::handle_toggle_command_center))
             .when(self.show_command_center, |el| {
