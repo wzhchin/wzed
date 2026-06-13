@@ -9,6 +9,7 @@
 *.xcodeproj
 .DS_Store
 .blob_store
+.claude/worktrees/
 .build
 .claude/settings.local.json
 .envrc

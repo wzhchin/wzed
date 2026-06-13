@@ -6,21 +6,21 @@ license = "GPL-3.0-or-later"
 
 [dependencies]
 anyhow = "1"
-editor = { path = "../zed/crates/editor" }
-multi_buffer = { path = "../zed/crates/multi_buffer" }
-language = { path = "../zed/crates/language" }
-language_core = { path = "../zed/crates/language_core" }
-grammars = { path = "../zed/crates/grammars", features = ["load-grammars"] }
-theme = { path = "../zed/crates/theme" }
-theme_settings = { path = "../zed/crates/theme_settings" }
-settings = { path = "../zed/crates/settings" }
-assets = { path = "../zed/crates/assets" }
-text = { path = "../zed/crates/text" }
-gpui = { path = "../zed/crates/gpui" }
-fs = { path = "../zed/crates/fs" }
-clock = { path = "../zed/crates/clock" }
-util = { path = "../zed/crates/util" }
-collections = { path = "../zed/crates/collections" }
+editor = { workspace = true }
+multi_buffer = { workspace = true }
+language = { workspace = true }
+language_core = { workspace = true }
+grammars = { workspace = true, features = ["load-grammars"] }
+theme = { workspace = true }
+theme_settings = { workspace = true }
+settings = { workspace = true }
+assets = { workspace = true }
+text = { workspace = true }
+gpui = { workspace = true }
+fs = { workspace = true }
+clock = { workspace = true }
+util = { workspace = true }
+collections = { workspace = true }
 regex = "1"
 dirs = "6.0.0"
 serde = { version = "1.0.228", features = ["derive"] }
@@ -32,7 +32,28 @@ chrono = "0.4"
 futures = "0.3"
 
 [target.'cfg(unix)'.dependencies]
-gpui_linux = { path = "../zed/crates/gpui_linux" }
+gpui_linux = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
-gpui_windows = { path = "../zed/crates/gpui_windows" }
+gpui_windows = { workspace = true }
+
+[workspace.dependencies]
+# Zed crates are sourced from the zed-industries/zed GitHub repo at a pinned rev.
+# To update, change `rev` here once — every crate below resolves to the same checkout.
+editor = { git = "https://github.com/zed-industries/zed", rev = "4ce18741ad2ea007cb20a1dd96d2a170d224cc01" }
+multi_buffer = { git = "https://github.com/zed-industries/zed", rev = "4ce18741ad2ea007cb20a1dd96d2a170d224cc01" }
+language = { git = "https://github.com/zed-industries/zed", rev = "4ce18741ad2ea007cb20a1dd96d2a170d224cc01" }
+language_core = { git = "https://github.com/zed-industries/zed", rev = "4ce18741ad2ea007cb20a1dd96d2a170d224cc01" }
+grammars = { git = "https://github.com/zed-industries/zed", rev = "4ce18741ad2ea007cb20a1dd96d2a170d224cc01" }
+theme = { git = "https://github.com/zed-industries/zed", rev = "4ce18741ad2ea007cb20a1dd96d2a170d224cc01" }
+theme_settings = { git = "https://github.com/zed-industries/zed", rev = "4ce18741ad2ea007cb20a1dd96d2a170d224cc01" }
+settings = { git = "https://github.com/zed-industries/zed", rev = "4ce18741ad2ea007cb20a1dd96d2a170d224cc01" }
+assets = { git = "https://github.com/zed-industries/zed", rev = "4ce18741ad2ea007cb20a1dd96d2a170d224cc01" }
+text = { git = "https://github.com/zed-industries/zed", rev = "4ce18741ad2ea007cb20a1dd96d2a170d224cc01" }
+gpui = { git = "https://github.com/zed-industries/zed", rev = "4ce18741ad2ea007cb20a1dd96d2a170d224cc01" }
+fs = { git = "https://github.com/zed-industries/zed", rev = "4ce18741ad2ea007cb20a1dd96d2a170d224cc01" }
+clock = { git = "https://github.com/zed-industries/zed", rev = "4ce18741ad2ea007cb20a1dd96d2a170d224cc01" }
+util = { git = "https://github.com/zed-industries/zed", rev = "4ce18741ad2ea007cb20a1dd96d2a170d224cc01" }
+collections = { git = "https://github.com/zed-industries/zed", rev = "4ce18741ad2ea007cb20a1dd96d2a170d224cc01" }
+gpui_linux = { git = "https://github.com/zed-industries/zed", rev = "4ce18741ad2ea007cb20a1dd96d2a170d224cc01" }
+gpui_windows = { git = "https://github.com/zed-industries/zed", rev = "4ce18741ad2ea007cb20a1dd96d2a170d224cc01" }
