@@ -1,94 +1,58 @@
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use gpui::*;
 
 use crate::tab::Tab;
 
 pub(crate) struct FileWatcher {
-    watched: Vec<WatchedFile>,
-}
-
-struct WatchedFile {
-    path: PathBuf,
-    last_modified: Option<std::time::SystemTime>,
+    // The on-disk mtime we last wrote ourselves (or last observed). An external
+    // change shows up as a different mtime; matching this entry means the event
+    // was caused by our own save and must be ignored.
+    known_mtimes: HashMap<PathBuf, std::time::SystemTime>,
 }
 
 impl FileWatcher {
     pub(crate) fn new() -> Self {
         Self {
-            watched: Vec::new(),
+            known_mtimes: HashMap::new(),
         }
     }
 
-    pub(crate) fn check_for_changes(
-        &mut self,
-        tabs: &mut [Tab],
-        cx: &mut App,
-    ) -> Vec<usize> {
-        let mut changed = Vec::new();
-
-        for (i, tab) in tabs.iter_mut().enumerate() {
-            let Some(path) = &tab.path else { continue };
-            if tab.is_dirty(cx) {
-                continue;
-            }
-
-            let modified = match std::fs::metadata(path) {
-                Ok(m) => m.modified().ok(),
-                Err(err) => {
-                    eprintln!("file watcher: failed to read metadata for {}: {err:#}", path.display());
-                    continue;
-                }
-            };
-
-            let entry = self.watched.iter().find(|w| w.path == *path);
-            let needs_check = match entry {
-                Some(w) => modified != w.last_modified,
-                None => true,
-            };
-
-            if !needs_check {
-                continue;
-            }
-
-            let disk_content = match std::fs::read_to_string(path) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-
-            let editor_content = tab.editor.read(cx).text(cx);
-            if disk_content != editor_content {
-                changed.push(i);
-            }
-
-            if let Some(entry) = self.watched.iter_mut().find(|w| w.path == *path) {
-                entry.last_modified = modified;
-            } else {
-                self.watched.push(WatchedFile {
-                    path: path.clone(),
-                    last_modified: modified,
-                });
-            }
+    // Record that we just wrote `path` so the watcher can suppress the change
+    // event our own save produces (no false "file changed externally" reload).
+    pub(crate) fn update_mtime(&mut self, path: &Path) {
+        if let Ok(modified) = std::fs::metadata(path).and_then(|m| m.modified()) {
+            self.known_mtimes.insert(path.to_path_buf(), modified);
         }
-
-        changed
     }
 
-    pub(crate) fn update_mtime(&mut self, path: &PathBuf) {
-        let modified = match std::fs::metadata(path) {
-            Ok(m) => m.modified().ok(),
-            Err(err) => {
-                eprintln!("file watcher: failed to read metadata for {}: {err:#}", path.display());
-                return;
-            }
+    // Record the current mtime when we start watching a path, so the first event
+    // after open isn't mistaken for an external change.
+    pub(crate) fn note_current_mtime(&mut self, path: &Path) {
+        if let Ok(modified) = std::fs::metadata(path).and_then(|m| m.modified()) {
+            self.known_mtimes.entry(path.to_path_buf()).or_insert(modified);
+        }
+    }
+
+    // Returns true if `path` changed on disk relative to what we last knew — i.e.
+    // this is a genuine external change, not our own save echoing back.
+    pub(crate) fn is_external_change(&self, path: &Path) -> bool {
+        let modified = match std::fs::metadata(path).and_then(|m| m.modified()) {
+            Ok(m) => m,
+            Err(_) => return false,
         };
-        if let Some(entry) = self.watched.iter_mut().find(|w| w.path == *path) {
-            entry.last_modified = modified;
-        } else {
-            self.watched.push(WatchedFile {
-                path: path.clone(),
-                last_modified: modified,
-            });
+        match self.known_mtimes.get(path) {
+            Some(known) => *known != modified,
+            None => true,
+        }
+    }
+
+    // Mark the current on-disk mtime as seen so we don't keep re-flagging the
+    // same external change.
+    pub(crate) fn mark_seen(&mut self, path: &Path) {
+        if let Ok(modified) = std::fs::metadata(path).and_then(|m| m.modified()) {
+            self.known_mtimes.insert(path.to_path_buf(), modified);
         }
     }
 

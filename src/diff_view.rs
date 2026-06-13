@@ -265,14 +265,8 @@ pub(crate) fn render_diff_view(
     let mut added = 0usize;
     let mut removed = 0usize;
     for (left, right) in &state.lines {
-        match left.kind {
-            DiffLineKind::Removed => removed += 1,
-            _ => {}
-        }
-        match right.kind {
-            DiffLineKind::Added => added += 1,
-            _ => {}
-        }
+        if left.kind == DiffLineKind::Removed { removed += 1 }
+        if right.kind == DiffLineKind::Added { added += 1 }
     }
 
     div()

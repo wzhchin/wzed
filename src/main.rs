@@ -23,6 +23,7 @@ use language::{LanguageRegistry, LoadedLanguage};
 use editor::EditorSettings;
 use settings::{KeymapFile, KeymapFileLoadResult, Settings, DEFAULT_KEYMAP_PATH};
 use app_theme::WzedThemeSettings;
+use fs::{Fs, RealFs};
 use workspace::LiteWorkspace;
 
 use ipc::{listen_for_instances, try_send_to_existing_instance, try_send_command_to_existing_instance, IpcMessage, OpenListener};
@@ -151,6 +152,11 @@ fn main() {
         theme::init(theme::LoadThemes::JustBase, cx);
         theme::set_theme_settings_provider(Box::new(WzedThemeSettings::new()), cx);
 
+        // Register the Zed Fs as a global so the file watcher can subscribe to
+        // filesystem events (used by the event-driven external-change detection).
+        let fs = Arc::new(RealFs::new(None, cx.background_executor().clone()));
+        <dyn Fs>::set_global(fs, cx);
+
         cx.bind_keys(
             KeymapFile::load_asset_allow_partial_failure(DEFAULT_KEYMAP_PATH, cx)
                 .log_err()
@@ -249,79 +255,20 @@ fn main() {
                     match message {
                         IpcMessage::OpenFiles(paths) => {
                             for path in &paths {
-                                if path.exists() {
-                                    if let Err(err) = _workspace.open_file_path(path.clone(), window, cx) {
+                                if path.exists()
+                                    && let Err(err) = _workspace.open_file_path(path.clone(), window, cx) {
                                         eprintln!("IPC: failed to open file {}: {err:#}", path.display());
                                     }
-                                }
                             }
                         }
                         IpcMessage::ExecuteCommand(command) => {
-                            match command.as_str() {
-                                "lite_editor::NewFile" => {
-                                    _workspace.handle_new(&NewFile, window, cx);
-                                }
-                                "lite_editor::OpenFile" => {
-                                    _workspace.handle_open(&OpenFile, window, cx);
-                                }
-                                "lite_editor::SaveFile" => {
-                                    _workspace.handle_save(&SaveFile, window, cx);
-                                }
-                                "lite_editor::SaveAll" => {
-                                    _workspace.handle_save_all(&SaveAll, window, cx);
-                                }
-                                "lite_editor::CloseTab" => {
-                                    _workspace.handle_close_tab(&CloseTab, window, cx);
-                                }
-                                "lite_editor::ToggleFind" => {
-                                    _workspace.handle_toggle_find(&ToggleFind, window, cx);
-                                }
-                                "lite_editor::Dismiss" => {
-                                    _workspace.handle_dismiss(&Dismiss, window, cx);
-                                }
-                                "lite_editor::FindNext" => {
-                                    _workspace.handle_find_next(&FindNext, window, cx);
-                                }
-                                "lite_editor::FindPrevious" => {
-                                    _workspace.handle_find_previous(&FindPrevious, window, cx);
-                                }
-                                "lite_editor::ToggleReplace" => {
-                                    _workspace.handle_toggle_replace(&ToggleReplace, window, cx);
-                                }
-                                "lite_editor::ReplaceNext" => {
-                                    _workspace.handle_replace_next(&ReplaceNext, window, cx);
-                                }
-                                "lite_editor::ReplaceAll" => {
-                                    _workspace.handle_replace_all(&ReplaceAll, window, cx);
-                                }
-                                "lite_editor::ToggleRegex" => {
-                                    _workspace.handle_toggle_regex(&ToggleRegex, window, cx);
-                                }
-                                "lite_editor::ToggleToolbar" => {
-                                    _workspace.handle_toggle_toolbar(&ToggleToolbar, window, cx);
-                                }
-                                "lite_editor::MoveToGroup" => {
-                                    _workspace.handle_move_to_group(&MoveToGroup, window, cx);
-                                }
-                                "lite_editor::ToggleCommandCenter" => {
-                                    _workspace.handle_toggle_command_center(
-                                        &ToggleCommandCenter, window, cx,
-                                    );
-                                }
-                                "lite_editor::SwitchEncoding" => {
-                                    _workspace.handle_switch_encoding(
-                                        &SwitchEncoding, window, cx,
-                                    );
-                                }
-                                "lite_editor::CompareFiles" => {
-                                    _workspace.handle_compare_files(&CompareFiles, window, cx);
-                                }
-                                "lite_editor::SearchAllTabs" => {
-                                    _workspace.handle_search_all_tabs(&SearchAllTabs, window, cx);
-                                }
-                                other => {
-                                    eprintln!("[IPC] unknown command: {other}");
-                                }
+                            // Dispatch through the unified action registry — the same
+                            // path keymaps and the command center use — so any action
+                            // registered via the normal `actions!` macro is invocable
+                            // over IPC with no hand-maintained command table.
+                            match cx.build_action(&command, None) {
+                                Ok(action) => window.dispatch_action(action, cx),
+                                Err(err) => eprintln!("[IPC] failed to build action {command:?}: {err}"),
                             }
                         }
                         IpcMessage::SetText(content) => {
@@ -382,11 +329,10 @@ fn main() {
                     workspace.restore_session(window, cx);
 
                     for path in &file_args {
-                        if path.exists() {
-                            if let Err(err) = workspace.open_file_path(path.clone(), window, cx) {
+                        if path.exists()
+                            && let Err(err) = workspace.open_file_path(path.clone(), window, cx) {
                                 eprintln!("failed to open file {}: {err:#}", path.display());
                             }
-                        }
                     }
                     workspace.save_session(cx);
                     workspace
@@ -473,8 +419,8 @@ fn register_languages(languages: &Arc<LanguageRegistry>) {
             None,
             Arc::new(move || {
                 Ok(LoadedLanguage {
-                    config: grammars::load_config_for_feature(&name_static, true),
-                    queries: grammars::load_queries(&name_static),
+                    config: grammars::load_config_for_feature(name_static, true),
+                    queries: grammars::load_queries(name_static),
                     context_provider: None,
                     toolchain_provider: None,
                     manifest_name: None,

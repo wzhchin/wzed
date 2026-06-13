@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -7,6 +8,7 @@ use language::language_settings::SoftWrap;
 use gpui::{self, *};
 use gpui::ExternalPaths;
 use gpui::prelude::FluentBuilder as _;
+use futures::StreamExt as _;
 use language::{Buffer, LanguageRegistry};
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
@@ -37,14 +39,20 @@ fn session_path() -> PathBuf {
 struct SessionState {
     tabs: Vec<SessionTab>,
     active: usize,
+    // Highest snapshot id ever assigned; restored so new tabs keep getting
+    // monotonically increasing ids that never collide with old snapshots.
+    #[serde(default)]
+    next_snapshot_id: u64,
 }
 
 #[derive(Serialize, Deserialize)]
 struct SessionTab {
     path: Option<String>,
-    unsaved_content: Option<String>,
     pinned: bool,
     encoding: Option<String>,
+    // Matches this tab to its snapshot backup on recovery.
+    #[serde(default)]
+    snapshot_id: u64,
 }
 
 fn save_session(workspace: &LiteWorkspace, cx: &App) {
@@ -53,31 +61,31 @@ fn save_session(workspace: &LiteWorkspace, cx: &App) {
         return;
     }
 
+    // Keep snapshot backups current before recording metadata: with unsaved text
+    // no longer embedded in the session, snapshots are the single full-text copy
+    // for crash recovery. Writing them here (not just on the autosave interval)
+    // closes the window where a crash between autosaves would lose recent edits.
+    workspace.save_dirty_snapshots(cx);
+
     let tabs: Vec<SessionTab> = workspace
         .tabs
         .iter()
-        .map(|tab| {
-            let unsaved_content = if tab.path.is_none() || tab.is_dirty(cx) {
-                Some(tab.editor.read(cx).text(cx).to_string())
+        .map(|tab| SessionTab {
+            path: tab.path.as_ref().map(|p| p.to_string_lossy().into_owned()),
+            pinned: tab.pinned,
+            encoding: if tab.encoding != encoding_rs::UTF_8 {
+                Some(encoding::encoding_label(tab.encoding).to_string())
             } else {
                 None
-            };
-            SessionTab {
-                path: tab.path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-                unsaved_content,
-                pinned: tab.pinned,
-                encoding: if tab.encoding != encoding_rs::UTF_8 {
-                    Some(encoding::encoding_label(tab.encoding).to_string())
-                } else {
-                    None
-                },
-            }
+            },
+            snapshot_id: tab.snapshot_id,
         })
         .collect();
 
     let state = SessionState {
         tabs,
         active: workspace.active,
+        next_snapshot_id: workspace.next_snapshot_id,
     };
 
     let path = session_path();
@@ -94,7 +102,7 @@ fn save_session(workspace: &LiteWorkspace, cx: &App) {
 }
 
 pub(crate) fn save_session_from_outside(workspace: &LiteWorkspace, cx: &App) {
-    workspace.save_dirty_snapshots(cx);
+    // save_session refreshes dirty snapshots as part of its own work now.
     save_session(workspace, cx);
 }
 
@@ -107,13 +115,11 @@ fn prune_old_snapshots() {
     let cutoff = std::time::SystemTime::now() - std::time::Duration::from_secs(utils::AppConfig::SNAPSHOT_RETENTION_DAYS * 24 * 3600);
     for entry in entries.flatten() {
         let Ok(metadata) = entry.metadata() else { continue };
-        if let Ok(modified) = metadata.modified() {
-            if modified < cutoff {
-                if let Err(err) = std::fs::remove_file(entry.path()) {
+        if let Ok(modified) = metadata.modified()
+            && modified < cutoff
+                && let Err(err) = std::fs::remove_file(entry.path()) {
                     eprintln!("failed to remove old snapshot: {err:#}");
                 }
-            }
-        }
     }
 }
 
@@ -125,6 +131,13 @@ pub(crate) struct LiteWorkspace {
     pub search: SearchState,
     show_toolbar: bool,
     file_watcher: FileWatcher,
+    // One Fs watcher per distinct parent directory of an open file. Each watcher
+    // drives a long-lived event stream; we add file paths to the matching one as
+    // tabs open. Replaced the old 5s polling loop.
+    directory_watchers: HashMap<PathBuf, Arc<dyn fs::Watcher>>,
+    // Monotonic counter assigning each tab a stable snapshot id; persists across
+    // session saves so a restored tab keeps the same snapshot key it had before.
+    next_snapshot_id: u64,
     pub(crate) recent_files: RecentFiles,
     pub(crate) show_recent_menu: bool,
     tab_scroll_handle: ScrollHandle,
@@ -158,6 +171,8 @@ impl LiteWorkspace {
             search,
             show_toolbar: true,
             file_watcher: FileWatcher::new(),
+            directory_watchers: HashMap::new(),
+            next_snapshot_id: 1,
             recent_files: RecentFiles::load_from_disk(),
             show_recent_menu: false,
             tab_scroll_handle: ScrollHandle::new(),
@@ -203,22 +218,80 @@ impl LiteWorkspace {
         })
         .detach();
 
+        this
+    }
+
+    // Ensure the parent directory of an open file is watched, and that this file's
+    // path is added to the watcher. Spawns one event-consuming task per directory
+    // the first time we see it; subsequent files in the same directory just reuse
+    // the existing watcher.
+    fn ensure_file_watched(&mut self, file_path: &Path, cx: &mut Context<Self>) {
+        let Some(parent) = file_path.parent() else {
+            return;
+        };
+        self.file_watcher.note_current_mtime(file_path);
+        if self.directory_watchers.contains_key(parent) {
+            // Directory already watched; just (re)add this file to its watcher.
+            if let Some(watcher) = self.directory_watchers.get(parent)
+                && let Err(err) = watcher.add(file_path) {
+                    eprintln!("file watcher: failed to watch {}: {err:#}", file_path.display());
+                }
+            return;
+        }
+
+        let fs = <dyn fs::Fs>::global(cx);
+        let parent = parent.to_path_buf();
+        let file_path_owned = file_path.to_path_buf();
+        let fs_clone = fs.clone();
         cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(std::time::Duration::from_secs(utils::AppConfig::FILE_WATCHER_POLL_SECS)).await;
-                let Ok(()) = this.update_in(cx, |this, window, cx| {
-                    let changed = this.file_watcher.check_for_changes(&mut this.tabs, cx);
-                    for idx in changed {
-                        FileWatcher::reload_tab(&mut this.tabs[idx], window, cx);
-                    }
-                }) else {
-                    return;
-                };
+            let (events, watcher) = fs_clone.watch(&parent, std::time::Duration::from_millis(100)).await;
+            // Register the watcher on the workspace once the stream is live.
+            let _ = this.update(cx, |this, _cx| {
+                this.directory_watchers.insert(parent.clone(), watcher.clone());
+                if let Err(err) = watcher.add(&file_path_owned) {
+                    eprintln!("file watcher: failed to watch {}: {err:#}", file_path_owned.display());
+                }
+            });
+            // Consume events for as long as the workspace lives.
+            let mut events = events;
+            while let Some(batch) = events.next().await {
+                let changed_paths: Vec<PathBuf> = batch.into_iter().map(|event| event.path).collect();
+                let _ = this.update_in(cx, |this, window, cx| {
+                    this.handle_external_changes(&changed_paths, window, cx);
+                });
             }
         })
         .detach();
+    }
 
-        this
+    // React to fs events: for each changed path that matches an open tab, decide
+    // whether it is our own save (suppress), a clean-tab reload, or a conflict
+    // (dirty tab + external change) — never silently clobbering user edits.
+    fn handle_external_changes(&mut self, changed_paths: &[PathBuf], window: &mut Window, cx: &mut Context<Self>) {
+        for path in changed_paths {
+            for idx in 0..self.tabs.len() {
+                let matches = self.tabs[idx].path.as_ref().is_some_and(|p| p == path);
+                if !matches {
+                    continue;
+                }
+                // Ignore the event if the mtime matches what we last wrote.
+                if !self.file_watcher.is_external_change(path) {
+                    continue;
+                }
+                if self.tabs[idx].is_dirty(cx) {
+                    // Local edits AND an external change: surface the conflict,
+                    // preserve the user's unsaved work.
+                    self.show_notification(
+                        format!("{} changed on disk; save your version or revert to reload it", path.display()),
+                        cx,
+                    );
+                } else {
+                    FileWatcher::reload_tab(&mut self.tabs[idx], window, cx);
+                    self.show_notification(format!("Reloaded {} (changed on disk)", path.display()), cx);
+                }
+                self.file_watcher.mark_seen(path);
+            }
+        }
     }
 
     pub(crate) fn show_notification(&mut self, message: impl Into<String>, cx: &mut Context<Self>) {
@@ -240,14 +313,9 @@ impl LiteWorkspace {
         let data = match std::fs::read_to_string(&path) {
             Ok(d) => d,
             Err(_) => {
-                self.tabs.push(Self::create_tab(
-                    None,
-                    "untitled".into(),
-                    String::new(),
-                    None,
-                    window,
-                    cx,
-                ));
+                // Session file is gone — recover whatever the snapshot backups
+                // still hold instead of presenting an empty editor.
+                self.recover_tabs_from_snapshots(window, cx);
                 return;
             }
         };
@@ -255,22 +323,23 @@ impl LiteWorkspace {
         let state: SessionState = match serde_json::from_str(&data) {
             Ok(s) => s,
             Err(_) => {
-                self.tabs.push(Self::create_tab(
-                    None,
-                    "untitled".into(),
-                    String::new(),
-                    None,
-                    window,
-                    cx,
-                ));
+                // Session file is corrupt — same recovery path.
+                self.recover_tabs_from_snapshots(window, cx);
                 return;
             }
         };
 
+        // Re-sync the snapshot-id counter so freshly created tabs never reuse an
+        // id that still belongs to a surviving snapshot.
+        if state.next_snapshot_id > self.next_snapshot_id {
+            self.next_snapshot_id = state.next_snapshot_id;
+        }
+
         if state.tabs.is_empty() {
-            self.tabs.push(Self::create_tab(
+            let new_id = self.mint_snapshot_id();
+            self.tabs.push(Self::create_tab(new_id,
                 None,
-                "untitled".into(),
+                utils::untitled_name().into(),
                 String::new(),
                 None,
                 window,
@@ -282,6 +351,9 @@ impl LiteWorkspace {
         for (i, tab) in state.tabs.into_iter().enumerate() {
             let was_pinned = tab.pinned;
             let stored_encoding = tab.encoding.as_deref().and_then(encoding::encoding_from_label);
+            // Unsaved content now lives only in the snapshot backup keyed by the
+            // tab's snapshot id; the session file carries metadata only.
+            let unsaved = Self::read_snapshot(tab.snapshot_id);
             match tab.path {
                 Some(path_str) => {
                     let path = PathBuf::from(&path_str);
@@ -289,30 +361,38 @@ impl LiteWorkspace {
                         if self.open_file_path(path.clone(), window, cx).is_err() {
                             continue;
                         }
+                        let last_idx = self.tabs.len() - 1;
+                        // Reclaim the persisted snapshot id so this tab keeps
+                        // matching its existing snapshot backup.
+                        self.tabs[last_idx].snapshot_id = tab.snapshot_id;
                         if let Some(enc) = stored_encoding {
-                            let last_idx = self.tabs.len() - 1;
                             if let Ok(content) = encoding::read_file_as_encoding(&path, enc) {
                                 self.tabs[last_idx].encoding = enc;
                                 self.tabs[last_idx].editor.update(cx, |editor, cx| {
                                     editor.set_text(content.as_str(), window, cx);
+                                    let buffer = editor.buffer().read(cx).as_singleton();
+                                    if let Some(buffer) = buffer {
+                                        buffer.update(cx, |buf, _cx| buf.set_encoding(enc));
+                                    }
                                 });
                             }
-                        } else if let Some(content) = tab.unsaved_content {
-                            let last_idx = self.tabs.len() - 1;
+                        } else if let Some(content) = unsaved {
                             self.tabs[last_idx].editor.update(cx, |editor, cx| {
                                 editor.set_text(content.as_str(), window, cx);
                             });
                         }
-                    } else if let Some(content) = tab.unsaved_content {
+                    } else if let Some(content) = unsaved {
                         let title = utils::file_name_from_path(&path);
-                        self.tabs.push(Self::create_tab(
+                        let new_tab = Self::create_tab(
+                            tab.snapshot_id,
                             Some(path),
                             title.into(),
                             content,
                             Some(&self.languages),
                             window,
                             cx,
-                        ));
+                        );
+                        self.tabs.push(new_tab);
                         if let Some(enc) = stored_encoding
                             && let Some(last_tab) = self.tabs.last_mut()
                         {
@@ -321,15 +401,17 @@ impl LiteWorkspace {
                     }
                 }
                 None => {
-                    let content = tab.unsaved_content.unwrap_or_default();
-                    self.tabs.push(Self::create_tab(
+                    let content = unsaved.unwrap_or_default();
+                    let new_tab = Self::create_tab(
+                        tab.snapshot_id,
                         None,
-                        "untitled".into(),
+                        utils::untitled_name().into(),
                         content,
                         None,
                         window,
                         cx,
-                    ));
+                    );
+                    self.tabs.push(new_tab);
                 }
             }
             if was_pinned
@@ -349,6 +431,7 @@ impl LiteWorkspace {
     }
 
     fn create_tab(
+        snapshot_id: u64,
         path: Option<PathBuf>,
         title: SharedString,
         content: String,
@@ -387,7 +470,21 @@ impl LiteWorkspace {
             group: None,
             encoding: encoding_rs::UTF_8,
             pinned: false,
+            snapshot_id,
         }
+    }
+
+    fn mint_snapshot_id(&mut self) -> u64 {
+        let id = self.next_snapshot_id;
+        self.next_snapshot_id += 1;
+        id
+    }
+
+    // Stable, filesystem-safe key for a tab's snapshot: the tab's snapshot id.
+    // Path identity is tracked separately in the session so restore can re-open
+    // the right file; the id survives tab reorder/close where a tab index would not.
+    fn snapshot_filename(snapshot_id: u64) -> String {
+        format!("snap-{snapshot_id}.txt")
     }
 
     pub(crate) fn open_file_path(
@@ -411,8 +508,12 @@ impl LiteWorkspace {
         let languages = self.languages.clone();
         let path_for_lang = path.clone();
         let buffer = cx.new(|cx| {
-            let buffer = Buffer::local(content, cx);
+            let mut buffer = Buffer::local(content, cx);
             buffer.set_language_registry(languages.clone());
+            // Record the detected encoding on the buffer itself so the save path
+            // (which reads buffer.encoding()) re-encodes into the right encoding
+            // rather than always writing UTF-8.
+            buffer.set_encoding(detected_encoding);
 
             let available = languages.language_for_file_path(&path_for_lang);
             if let Some(available) = available {
@@ -434,6 +535,7 @@ impl LiteWorkspace {
         let editor = cx.new(|cx| Editor::new(EditorMode::full(), multibuffer, None, window, cx));
         editor.update(cx, |e, cx| e.set_soft_wrap_mode(SoftWrap::EditorWidth, cx));
 
+        let new_id = self.mint_snapshot_id();
         self.tabs.push(Tab {
             editor,
             path: Some(path.clone()),
@@ -441,11 +543,13 @@ impl LiteWorkspace {
             group: None,
             encoding: detected_encoding,
             pinned: false,
+            snapshot_id: new_id,
         });
         self.active = self.tabs.len() - 1;
         self.recent_files.add(&path);
         self.recent_files.save_to_disk();
         self.save_session(cx);
+        self.ensure_file_watched(&path, cx);
         cx.notify();
         Ok(())
     }
@@ -453,9 +557,6 @@ impl LiteWorkspace {
     fn write_editor_to_file(
         editor: &Entity<Editor>, path: &Path, cx: &mut Context<Self>,
     ) -> Result<()> {
-        let content = editor.read(cx).text(cx);
-        std::fs::write(path, &content)
-            .with_context(|| format!("failed to write file: {}", path.display()))?;
         let buffer = editor
             .read(cx)
             .buffer()
@@ -463,6 +564,14 @@ impl LiteWorkspace {
             .as_singleton()
             .context("expected singleton buffer")?
             .clone();
+        let content = editor.read(cx).text(cx);
+        // Encode back into the file's encoding rather than always writing UTF-8 —
+        // otherwise a GBK/Shift_JIS file would be silently rewritten as UTF-8 on save.
+        let encoding = buffer.read(cx).encoding();
+        let encoded = encoding::encode_string(&content, encoding)
+            .map_err(anyhow::Error::msg)?;
+        std::fs::write(path, &encoded)
+            .with_context(|| format!("failed to write file: {}", path.display()))?;
         let version = buffer.read(cx).snapshot().text.version().clone();
         buffer.update(cx, |buf, cx| {
             buf.did_save(version, None, cx);
@@ -541,9 +650,10 @@ impl LiteWorkspace {
             return;
         }
 
+        let default_name = tab.title.to_string();
         let receiver = cx.prompt_for_new_path(
             Path::new("."),
-            Some("untitled"),
+            Some(&default_name),
         );
         cx.spawn(async move |this, cx| {
             let path = match receiver.await {
@@ -570,6 +680,7 @@ impl LiteWorkspace {
             let Some(path) = tab.path.clone() else { continue };
             if let Err(err) = Self::write_editor_to_file(&tab.editor, &path, cx) {
                 eprintln!("failed to save {}: {err:#}", path.display());
+                self.show_notification(format!("Save failed for {}: {err:#}", path.display()), cx);
                 continue;
             }
             self.file_watcher.update_mtime(&path);
@@ -585,25 +696,86 @@ impl LiteWorkspace {
             return;
         }
 
-        for (i, tab) in self.tabs.iter().enumerate() {
+        for tab in self.tabs.iter() {
             if !tab.is_dirty(cx) {
                 continue;
             }
-            self.save_snapshot_for_tab(i, tab, cx);
+            self.save_snapshot_for_tab(tab, cx);
         }
     }
 
-    fn save_snapshot_for_tab(&self, index: usize, tab: &Tab, cx: &App) {
+    fn save_snapshot_for_tab(&self, tab: &Tab, cx: &App) {
         let snapshots_dir = utils::config_dir().join("snapshots");
         if let Err(err) = std::fs::create_dir_all(&snapshots_dir) {
             eprintln!("failed to create snapshots dir: {err:#}");
             return;
         }
         let content = tab.editor.read(cx).text(cx);
-        let timestamp = utils::timestamp_secs();
-        let snapshot_name = format!("tab-{index}-{timestamp}.txt");
+        let snapshot_name = Self::snapshot_filename(tab.snapshot_id);
         if let Err(err) = std::fs::write(snapshots_dir.join(&snapshot_name), &content) {
             eprintln!("autosave snapshot failed: {err:#}");
+        }
+    }
+
+    // Read a snapshot's content back by id. Returns None when no snapshot exists
+    // for that id — callers fall back gracefully and never fabricate content.
+    fn read_snapshot(snapshot_id: u64) -> Option<String> {
+        let snapshots_dir = utils::config_dir().join("snapshots");
+        std::fs::read_to_string(snapshots_dir.join(Self::snapshot_filename(snapshot_id))).ok()
+    }
+
+    // Last-resort recovery when session.json itself is lost or unreadable: scan
+    // surviving snapshots and rebuild each as a tab carrying that content. We
+    // cannot know the original path/tab-title from a lone id-keyed snapshot, so
+    // these come back as untitled tabs — but the unsaved text is preserved,
+    // which is the whole point of the snapshot backups.
+    fn recover_tabs_from_snapshots(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let snapshots_dir = utils::config_dir().join("snapshots");
+        let Ok(entries) = std::fs::read_dir(&snapshots_dir) else {
+            return;
+        };
+        let mut snapshot_ids: Vec<u64> = entries
+            .flatten()
+            .filter_map(|entry| {
+                let name = entry.file_name();
+                let stem = name.to_string_lossy();
+                stem.strip_prefix("snap-")?.strip_suffix(".txt")?.parse::<u64>().ok()
+            })
+            .collect();
+        snapshot_ids.sort_unstable();
+        // Keep the counter ahead of any surviving snapshot id so newly created
+        // tabs never collide with a recovered one.
+        if let Some(&max_id) = snapshot_ids.last()
+            && max_id >= self.next_snapshot_id
+        {
+            self.next_snapshot_id = max_id + 1;
+        }
+        for id in snapshot_ids {
+            if let Some(content) = Self::read_snapshot(id)
+                && !content.is_empty()
+            {
+                let tab = Self::create_tab(
+                    id,
+                    None,
+                    utils::untitled_name().into(),
+                    content,
+                    None,
+                    window,
+                    cx,
+                );
+                self.tabs.push(tab);
+            }
+        }
+        if self.tabs.is_empty() {
+            let new_id = self.mint_snapshot_id();
+            self.tabs.push(Self::create_tab(new_id,
+                None,
+                utils::untitled_name().into(),
+                String::new(),
+                None,
+                window,
+                cx,
+            ));
         }
     }
 
@@ -612,7 +784,8 @@ impl LiteWorkspace {
         _action: &AutosaveTimer,
         cx: &mut Context<Self>,
     ) {
-        self.save_dirty_snapshots(cx);
+        // save_session now refreshes dirty snapshots itself, so this just records
+        // session metadata and prunes stale snapshots on the interval.
         self.save_session(cx);
         prune_old_snapshots();
     }
@@ -623,9 +796,10 @@ impl LiteWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.tabs.push(Self::create_tab(
+        let new_id = self.mint_snapshot_id();
+        self.tabs.push(Self::create_tab(new_id,
             None,
-            "untitled".into(),
+            utils::untitled_name().into(),
             String::new(),
             None,
             window,
@@ -672,7 +846,7 @@ impl LiteWorkspace {
             return;
         }
         if self.tabs[index].is_dirty(cx) {
-            self.save_snapshot_for_tab(index, &self.tabs[index], cx);
+            self.save_snapshot_for_tab(&self.tabs[index], cx);
         }
         self.tabs.remove(index);
         if self.active >= self.tabs.len() {
@@ -1121,11 +1295,10 @@ impl Render for LiteWorkspace {
             )
             .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
                 for path in paths.paths() {
-                    if path.is_file() {
-                        if let Err(err) = this.open_file_path(path.clone(), window, cx) {
+                    if path.is_file()
+                        && let Err(err) = this.open_file_path(path.clone(), window, cx) {
                             this.show_notification(format!("Failed to open file: {err:#}"), cx);
                         }
-                    }
                 }
             }))
     }
