@@ -338,7 +338,7 @@ fn main() {
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let icon = APP_ICON.as_ref().cloned();
         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-        let icon: Option<Arc<image::RgbaImage>> = None;
+        let icon = None;
         let window_handle = cx
             .open_window(
                 WindowOptions {
