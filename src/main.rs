@@ -84,13 +84,14 @@ actions!(
 static APP_ICON: std::sync::LazyLock<Option<Arc<image::RgbaImage>>> =
     std::sync::LazyLock::new(|| {
         const BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/app_icon.png"));
-        let reader = match image::ImageReader::new(std::io::Cursor::new(BYTES)).with_guessed_format() {
-            Ok(reader) => reader,
-            Err(err) => {
-                eprintln!("failed to guess embedded app icon format: {err}");
-                return None;
-            }
-        };
+        let reader =
+            match image::ImageReader::new(std::io::Cursor::new(BYTES)).with_guessed_format() {
+                Ok(reader) => reader,
+                Err(err) => {
+                    eprintln!("failed to guess embedded app icon format: {err}");
+                    return None;
+                }
+            };
         match reader.decode() {
             Ok(image) => Some(Arc::new(image.into())),
             Err(err) => {

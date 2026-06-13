@@ -27,8 +27,8 @@ fn prepare_linux_icon() {
 // taskbar, window title bar all read it). No runtime decode needed.
 #[cfg(target_os = "windows")]
 fn prepare_windows_icon() {
-    use image::codecs::ico::IcoEncoder;
     use image::ImageReader;
+    use image::codecs::ico::IcoEncoder;
     use std::io::Cursor;
 
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
@@ -44,9 +44,8 @@ fn prepare_windows_icon() {
     let frames: Vec<image::codecs::ico::IcoFrame> = sizes
         .iter()
         .map(|&size| {
-            let rgba = image
-                .resize_exact(size, size, image::imageops::FilterType::Lanczos3)
-                .to_rgba8();
+            let rgba =
+                image.resize_exact(size, size, image::imageops::FilterType::Lanczos3).to_rgba8();
             image::codecs::ico::IcoFrame::as_png(
                 rgba.as_raw(),
                 size as u32,
@@ -59,9 +58,7 @@ fn prepare_windows_icon() {
 
     let ico_path = PathBuf::from(&out_dir).join("app_icon.ico");
     let mut buffer = Vec::new();
-    IcoEncoder::new(Cursor::new(&mut buffer))
-        .encode_images(&frames)
-        .expect("encoding .ico");
+    IcoEncoder::new(Cursor::new(&mut buffer)).encode_images(&frames).expect("encoding .ico");
     std::fs::write(&ico_path, &buffer).expect("writing .ico");
 
     let mut resource = winresource::WindowsResource::new();

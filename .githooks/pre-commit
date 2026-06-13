@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Pre-commit hook: run `cargo fmt --check` on staged Rust files.
+# Fails the commit if any staged .rs file is not formatted.
+# Install once per clone:  git config core.hooksPath .githooks
+
+set -euo pipefail
+
+# Only consider Rust files staged for commit (added/copied/modified/renamed).
+staged_rs=$(git diff --cached --name-only --diff-filter=ACMR -- '*.rs' || true)
+if [ -z "$staged_rs" ]; then
+    exit 0
+fi
+
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "pre-commit: cargo not found on PATH; skipping fmt check." >&2
+    exit 0
+fi
+
+# Check formatting of the whole crate (rustfmt resolves modules, so we can't
+# safely check individual files in isolation). If anything is unformatted,
+# report which staged files differ and abort.
+if ! cargo fmt --check >/dev/null 2>&1; then
+    echo "pre-commit: 'cargo fmt --check' failed. Unformatted staged files:" >&2
+    while IFS= read -r file; do
+        if ! cargo fmt -- --check "$file" >/dev/null 2>&1; then
+            echo "    $file" >&2
+        fi
+    done <<< "$staged_rs"
+    echo >&2
+    echo "Run 'cargo fmt' and re-stage, or commit with --no-verify to bypass." >&2
+    exit 1
+fi
