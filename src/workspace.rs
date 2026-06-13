@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, bail};
-use editor::{Editor, EditorMode, MultiBuffer};
+use editor::{Editor, EditorEvent, EditorMode, MultiBuffer};
 use language::language_settings::SoftWrap;
 use gpui::{self, *};
 use gpui::ExternalPaths;
@@ -177,9 +177,11 @@ impl LiteWorkspace {
         .detach();
 
         let cc_editor = this.command_center_editor.clone();
-        cx.observe(&cc_editor, move |this, _editor, cx| {
-            this.command_center_selected = 0;
-            cx.notify();
+        cx.subscribe_in(&cc_editor, window, move |this, _editor, event: &EditorEvent, _window, cx| {
+            if matches!(event, EditorEvent::BufferEdited | EditorEvent::Edited { .. }) {
+                this.command_center_selected = 0;
+                cx.notify();
+            }
         })
         .detach();
 
