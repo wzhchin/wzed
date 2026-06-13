@@ -62,8 +62,8 @@ actions!(
         ToggleToolbar,
         /// Move current tab to a new group.
         MoveToGroup,
-        /// Reload file with a different encoding.
-        ReloadWithEncoding,
+        /// Switch encoding via the command center picker.
+        SwitchEncoding,
         /// Compare current file with another file.
         CompareFiles,
         /// Toggle the command center.
@@ -173,7 +173,7 @@ fn main() {
             KeyBinding::new("ctrl-shift-s", SaveAll, Some("LiteWorkspace")),
             KeyBinding::new("ctrl-g", MoveToGroup, Some("LiteWorkspace")),
             KeyBinding::new("ctrl-alt-d", CompareFiles, Some("LiteWorkspace")),
-            KeyBinding::new("ctrl-shift-e", ReloadWithEncoding, Some("LiteWorkspace")),
+            KeyBinding::new("ctrl-shift-e", SwitchEncoding, Some("LiteWorkspace")),
             KeyBinding::new("alt-x", ToggleCommandCenter, Some("LiteWorkspace")),
             // Editor actions — these use Zed's built-in editor actions
             KeyBinding::new("ctrl-d", editor::actions::SelectNext::default(), Some("Editor")),
@@ -308,9 +308,9 @@ fn main() {
                                         &ToggleCommandCenter, window, cx,
                                     );
                                 }
-                                "lite_editor::ReloadWithEncoding" => {
-                                    _workspace.handle_reload_encoding(
-                                        &ReloadWithEncoding, window, cx,
+                                "lite_editor::SwitchEncoding" => {
+                                    _workspace.handle_switch_encoding(
+                                        &SwitchEncoding, window, cx,
                                     );
                                 }
                                 "lite_editor::CompareFiles" => {
