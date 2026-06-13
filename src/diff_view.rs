@@ -162,11 +162,7 @@ pub(crate) fn compute_diff(
         }
     }
 
-    DiffState {
-        left_title,
-        right_title,
-        lines,
-    }
+    DiffState { left_title, right_title, lines }
 }
 
 pub(crate) fn render_diff_view(
@@ -191,14 +187,8 @@ pub(crate) fn render_diff_view(
                 DiffLineKind::Removed => colors::TRANSPARENT,
             };
 
-            let left_num = left
-                .line_number
-                .map(|n| n.to_string())
-                .unwrap_or_default();
-            let right_num = right
-                .line_number
-                .map(|n| n.to_string())
-                .unwrap_or_default();
+            let left_num = left.line_number.map(|n| n.to_string()).unwrap_or_default();
+            let right_num = right.line_number.map(|n| n.to_string()).unwrap_or_default();
             let left_text = left.content.trim_end().to_string();
             let right_text = right.content.trim_end().to_string();
 
@@ -265,8 +255,12 @@ pub(crate) fn render_diff_view(
     let mut added = 0usize;
     let mut removed = 0usize;
     for (left, right) in &state.lines {
-        if left.kind == DiffLineKind::Removed { removed += 1 }
-        if right.kind == DiffLineKind::Added { added += 1 }
+        if left.kind == DiffLineKind::Removed {
+            removed += 1
+        }
+        if right.kind == DiffLineKind::Added {
+            added += 1
+        }
     }
 
     div()
@@ -283,32 +277,12 @@ pub(crate) fn render_diff_view(
                 .border_b_1()
                 .border_color(colors::BG_BORDER)
                 .bg(colors::BG_DEEPEST)
-                .child(
-                    div()
-                        .flex_1()
-                        .px(px(8.0))
-                        .flex()
-                        .items_center()
-                        .child(
-                            div()
-                                .text_size(px(12.0))
-                                .text_color(colors::TEXT_DEFAULT)
-                                .child(left_title),
-                        ),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .px(px(8.0))
-                        .flex()
-                        .items_center()
-                        .child(
-                            div()
-                                .text_size(px(12.0))
-                                .text_color(colors::TEXT_DEFAULT)
-                                .child(right_title),
-                        ),
-                )
+                .child(div().flex_1().px(px(8.0)).flex().items_center().child(
+                    div().text_size(px(12.0)).text_color(colors::TEXT_DEFAULT).child(left_title),
+                ))
+                .child(div().flex_1().px(px(8.0)).flex().items_center().child(
+                    div().text_size(px(12.0)).text_color(colors::TEXT_DEFAULT).child(right_title),
+                ))
                 .child(
                     div()
                         .id("close-diff-btn")
@@ -321,13 +295,7 @@ pub(crate) fn render_diff_view(
                         .on_click(close),
                 ),
         )
-        .child(
-            div()
-                .id("diff-content")
-                .flex_1()
-                .overflow_y_scroll()
-                .children(rows),
-        )
+        .child(div().id("diff-content").flex_1().overflow_y_scroll().children(rows))
         .child(
             div()
                 .flex()

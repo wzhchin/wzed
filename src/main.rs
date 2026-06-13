@@ -1,11 +1,11 @@
-mod command_center;
-mod ipc;
-mod search;
 mod app_theme;
+mod command_center;
 mod diff_view;
 mod encoding;
 mod file_watcher;
+mod ipc;
 mod recent_files;
+mod search;
 mod tab;
 mod topbar;
 mod utils;
@@ -16,17 +16,20 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui::*;
-use util::ResultExt;
-use theme::ActiveTheme;
-use language::{LanguageRegistry, LoadedLanguage};
-use editor::EditorSettings;
-use settings::{KeymapFile, KeymapFileLoadResult, Settings, DEFAULT_KEYMAP_PATH};
 use app_theme::WzedThemeSettings;
+use editor::EditorSettings;
 use fs::{Fs, RealFs};
+use gpui::*;
+use language::{LanguageRegistry, LoadedLanguage};
+use settings::{DEFAULT_KEYMAP_PATH, KeymapFile, KeymapFileLoadResult, Settings};
+use theme::ActiveTheme;
+use util::ResultExt;
 use workspace::LiteWorkspace;
 
-use ipc::{listen_for_instances, try_send_to_existing_instance, try_send_command_to_existing_instance, IpcMessage, OpenListener};
+use ipc::{
+    IpcMessage, OpenListener, listen_for_instances, try_send_command_to_existing_instance,
+    try_send_to_existing_instance,
+};
 
 actions!(
     lite_editor,
@@ -253,114 +256,128 @@ fn main() {
                 let Some(handle) = handle else {
                     continue;
                 };
-                handle.update(cx, |_workspace, window, cx| {
-                    match message {
-                        IpcMessage::OpenFiles(paths) => {
-                            for path in &paths {
-                                if path.exists()
-                                    && let Err(err) = _workspace.open_file_path(path.clone(), window, cx) {
-                                        eprintln!("IPC: failed to open file {}: {err:#}", path.display());
+                handle
+                    .update(cx, |_workspace, window, cx| {
+                        match message {
+                            IpcMessage::OpenFiles(paths) => {
+                                for path in &paths {
+                                    if path.exists()
+                                        && let Err(err) =
+                                            _workspace.open_file_path(path.clone(), window, cx)
+                                    {
+                                        eprintln!(
+                                            "IPC: failed to open file {}: {err:#}",
+                                            path.display()
+                                        );
                                     }
+                                }
                             }
-                        }
-                        IpcMessage::ExecuteCommand(command) => {
-                            // Dispatch through the unified action registry — the same
-                            // path keymaps and the command center use — so any action
-                            // registered via the normal `actions!` macro is invocable
-                            // over IPC with no hand-maintained command table.
-                            match cx.build_action(&command, None) {
-                                Ok(action) => window.dispatch_action(action, cx),
-                                Err(err) => eprintln!("[IPC] failed to build action {command:?}: {err}"),
+                            IpcMessage::ExecuteCommand(command) => {
+                                // Dispatch through the unified action registry — the same
+                                // path keymaps and the command center use — so any action
+                                // registered via the normal `actions!` macro is invocable
+                                // over IPC with no hand-maintained command table.
+                                match cx.build_action(&command, None) {
+                                    Ok(action) => window.dispatch_action(action, cx),
+                                    Err(err) => {
+                                        eprintln!("[IPC] failed to build action {command:?}: {err}")
+                                    }
+                                }
                             }
-                        }
-                        IpcMessage::SetText(content) => {
-                            let tab = &_workspace.tabs[_workspace.active];
-                            tab.editor.update(cx, |editor, cx| {
-                                editor.set_text(content.as_str(), window, cx);
-                            });
-                            _workspace.save_session(cx);
-                        }
-                        IpcMessage::SaveAs(path) => {
-                            if let Err(err) = _workspace.save_active_tab_as(path, cx) {
-                                eprintln!("save-as failed: {err:#}");
-                            }
-                        }
-                        IpcMessage::SwitchTab(index) => {
-                            if index < _workspace.tabs.len() {
-                                _workspace.active = index;
+                            IpcMessage::SetText(content) => {
+                                let tab = &_workspace.tabs[_workspace.active];
+                                tab.editor.update(cx, |editor, cx| {
+                                    editor.set_text(content.as_str(), window, cx);
+                                });
                                 _workspace.save_session(cx);
-                                cx.notify();
+                            }
+                            IpcMessage::SaveAs(path) => {
+                                if let Err(err) = _workspace.save_active_tab_as(path, cx) {
+                                    eprintln!("save-as failed: {err:#}");
+                                }
+                            }
+                            IpcMessage::SwitchTab(index) => {
+                                if index < _workspace.tabs.len() {
+                                    _workspace.active = index;
+                                    _workspace.save_session(cx);
+                                    cx.notify();
+                                }
                             }
                         }
-                    }
-                }).log_err();
+                    })
+                    .log_err();
             }
-        }).detach();
+        })
+        .detach();
 
         let file_args = file_args.clone();
-        let window_handle = cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-                    None,
-                    size(px(1200.0), px(800.0)),
-                    cx,
-                ))),
-                titlebar: Some(TitlebarOptions {
-                    title: Some("WZed".into()),
-                    appears_transparent: true,
-                    ..Default::default()
-                }),
-                focus: true,
-                show: true,
-                kind: WindowKind::Normal,
-                is_movable: true,
-                is_resizable: true,
-                is_minimizable: true,
-                display_id: None,
-                window_background: WindowBackgroundAppearance::default(),
-                app_id: Some("dev.wzed.editor".to_string()),
-                window_min_size: Some(size(px(400.0), px(300.0))),
-                window_decorations: Some(WindowDecorations::Client),
-                icon: None,
-                tabbing_identifier: None,
-            },
-            move |window, cx| {
-                let workspace = cx.new(|cx| {
-                    let mut workspace = LiteWorkspace::new(languages.clone(), window, cx);
+        let window_handle = cx
+            .open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                        None,
+                        size(px(1200.0), px(800.0)),
+                        cx,
+                    ))),
+                    titlebar: Some(TitlebarOptions {
+                        title: Some("WZed".into()),
+                        appears_transparent: true,
+                        ..Default::default()
+                    }),
+                    focus: true,
+                    show: true,
+                    kind: WindowKind::Normal,
+                    is_movable: true,
+                    is_resizable: true,
+                    is_minimizable: true,
+                    display_id: None,
+                    window_background: WindowBackgroundAppearance::default(),
+                    app_id: Some("dev.wzed.editor".to_string()),
+                    window_min_size: Some(size(px(400.0), px(300.0))),
+                    window_decorations: Some(WindowDecorations::Client),
+                    icon: None,
+                    tabbing_identifier: None,
+                },
+                move |window, cx| {
+                    let workspace = cx.new(|cx| {
+                        let mut workspace = LiteWorkspace::new(languages.clone(), window, cx);
 
-                    workspace.restore_session(window, cx);
+                        workspace.restore_session(window, cx);
 
-                    for path in &file_args {
-                        if path.exists()
-                            && let Err(err) = workspace.open_file_path(path.clone(), window, cx) {
+                        for path in &file_args {
+                            if path.exists()
+                                && let Err(err) = workspace.open_file_path(path.clone(), window, cx)
+                            {
                                 eprintln!("failed to open file {}: {err:#}", path.display());
                             }
-                    }
-                    workspace.save_session(cx);
-                    workspace
-                });
-
-                let workspace_close = workspace.clone();
-                window.on_window_should_close(cx, move |_window, cx| {
-                    workspace_close.read_with(cx, |workspace, cx| {
-                        workspace::save_session_from_outside(workspace, cx);
+                        }
+                        workspace.save_session(cx);
+                        workspace
                     });
-                    true
-                });
 
-                workspace
-            },
-        )
-        .expect("failed to open window");
+                    let workspace_close = workspace.clone();
+                    window.on_window_should_close(cx, move |_window, cx| {
+                        workspace_close.read_with(cx, |workspace, cx| {
+                            workspace::save_session_from_outside(workspace, cx);
+                        });
+                        true
+                    });
+
+                    workspace
+                },
+            )
+            .expect("failed to open window");
 
         cx.global::<OpenListener>().set_workspace(window_handle);
 
         cx.on_app_quit(|cx| {
             let listener = cx.global::<OpenListener>();
             if let Some(handle) = listener.workspace_handle() {
-                handle.read_with(cx, |workspace, cx| {
-                    workspace::save_session_from_outside(workspace, cx);
-                }).log_err();
+                handle
+                    .read_with(cx, |workspace, cx| {
+                        workspace::save_session_from_outside(workspace, cx);
+                    })
+                    .log_err();
             }
             std::future::ready(())
         })

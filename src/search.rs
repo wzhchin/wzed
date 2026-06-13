@@ -1,14 +1,11 @@
 use editor::{
-    Anchor, Editor, HighlightKey, MultiBufferOffset, SelectionEffects,
-    scroll::Autoscroll,
+    Anchor, Editor, HighlightKey, MultiBufferOffset, SelectionEffects, scroll::Autoscroll,
 };
 use gpui::*;
 
 use crate::app_theme::colors;
 use crate::workspace::LiteWorkspace;
-use crate::{
-    FindNext, FindPrevious, ReplaceAll, ReplaceNext, ToggleFind, ToggleRegex,
-};
+use crate::{FindNext, FindPrevious, ReplaceAll, ReplaceNext, ToggleFind, ToggleRegex};
 
 pub(crate) struct TabSearchResult {
     pub tab_index: usize,
@@ -48,11 +45,7 @@ impl SearchState {
         }
     }
 
-    pub(crate) fn run_search(
-        &mut self,
-        active_editor: &Entity<Editor>,
-        cx: &mut App,
-    ) {
+    pub(crate) fn run_search(&mut self, active_editor: &Entity<Editor>, cx: &mut App) {
         let query = self.query_editor.read(cx).text(cx);
 
         active_editor.update(cx, |editor, cx| {
@@ -68,10 +61,7 @@ impl SearchState {
         let text = active_editor.read(cx).text(cx);
         let matches = if self.use_regex {
             match regex::Regex::new(&query) {
-                Ok(re) => re
-                    .find_iter(&text)
-                    .map(|m| m.start()..m.end())
-                    .collect(),
+                Ok(re) => re.find_iter(&text).map(|m| m.start()..m.end()).collect(),
                 Err(_) => Vec::new(),
             }
         } else {
@@ -108,11 +98,7 @@ impl SearchState {
             );
         });
 
-        self.current_match = if matches.is_empty() {
-            None
-        } else {
-            Some(0)
-        };
+        self.current_match = if matches.is_empty() { None } else { Some(0) };
         self.matches = matches;
     }
 
@@ -143,11 +129,7 @@ impl SearchState {
         self.current_match = Some(new_index);
 
         let range = self.matches[new_index].clone();
-        let snapshot = active_editor
-            .read(cx)
-            .buffer()
-            .read(cx)
-            .snapshot(cx);
+        let snapshot = active_editor.read(cx).buffer().read(cx).snapshot(cx);
         let start_anchor = snapshot.anchor_before(MultiBufferOffset(range.start));
         let end_anchor = snapshot.anchor_before(MultiBufferOffset(range.end));
 
@@ -178,11 +160,7 @@ impl SearchState {
         self.run_search(active_editor, cx);
     }
 
-    pub(crate) fn replace_all(
-        &mut self,
-        active_editor: &Entity<Editor>,
-        cx: &mut App,
-    ) {
+    pub(crate) fn replace_all(&mut self, active_editor: &Entity<Editor>, cx: &mut App) {
         if self.matches.is_empty() {
             return;
         }
@@ -264,7 +242,9 @@ impl SearchState {
                         .and_then(|re| re.find(&text).map(|m| m.start()))
                         .and_then(|pos| text[..pos].rfind('\n').map(|nl| nl + 1).or(Some(0)))
                         .and_then(|line_start| {
-                            text[line_start..].find('\n').map(|end| text[line_start..line_start + end].to_string())
+                            text[line_start..]
+                                .find('\n')
+                                .map(|end| text[line_start..line_start + end].to_string())
                                 .or_else(|| Some(text[line_start..].to_string()))
                         })
                         .unwrap_or_default()
@@ -313,12 +293,7 @@ pub(crate) fn render_search_bar(
         .px(px(8.0))
         .gap(px(6.0))
         .child(this.search.query_editor.clone())
-        .child(
-            div()
-                .text_size(px(12.0))
-                .text_color(colors::TEXT_MUTED)
-                .child(match_info),
-        )
+        .child(div().text_size(px(12.0)).text_color(colors::TEXT_MUTED).child(match_info))
         .child(
             div()
                 .id("find-prev-btn")

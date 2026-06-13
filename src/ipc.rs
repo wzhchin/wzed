@@ -25,10 +25,7 @@ impl Global for OpenListener {}
 
 impl OpenListener {
     pub(crate) fn new(sender: std::sync::mpsc::Sender<IpcMessage>) -> Self {
-        Self(Arc::new(SharedState {
-            sender,
-            workspace_handle: std::sync::Mutex::new(None),
-        }))
+        Self(Arc::new(SharedState { sender, workspace_handle: std::sync::Mutex::new(None) }))
     }
 
     pub(crate) fn shared(&self) -> Arc<SharedState> {
@@ -80,14 +77,12 @@ pub(crate) fn parse_ipc_message(text: &str) -> Option<IpcMessage> {
         return Some(IpcMessage::SaveAs(PathBuf::from(path)));
     }
     if let Some(index) = text.strip_prefix("SWITCHTAB:")
-        && let Ok(idx) = index.parse::<usize>() {
-            return Some(IpcMessage::SwitchTab(idx));
-        }
-    let paths: Vec<PathBuf> = text
-        .split('\n')
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
-        .collect();
+        && let Ok(idx) = index.parse::<usize>()
+    {
+        return Some(IpcMessage::SwitchTab(idx));
+    }
+    let paths: Vec<PathBuf> =
+        text.split('\n').filter(|s| !s.is_empty()).map(PathBuf::from).collect();
     if !paths.is_empty() {
         return Some(IpcMessage::OpenFiles(paths));
     }
@@ -96,9 +91,7 @@ pub(crate) fn parse_ipc_message(text: &str) -> Option<IpcMessage> {
 
 #[cfg(unix)]
 fn ipc_socket_path() -> PathBuf {
-    dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("wzed.sock")
+    dirs::data_dir().unwrap_or_else(|| PathBuf::from("/tmp")).join("wzed.sock")
 }
 
 #[cfg(unix)]
@@ -149,11 +142,11 @@ pub(crate) fn listen_for_instances(sender: std::sync::mpsc::Sender<IpcMessage>) 
     if let Err(e) = UnixDatagram::unbound().and_then(|s| {
         s.connect(&sock_path)?;
         s.send(&[])
-    })
-        && e.kind() == std::io::ErrorKind::ConnectionRefused
-        && let Err(err) = std::fs::remove_file(&sock_path) {
-            eprintln!("could not remove stale IPC socket: {err}");
-        }
+    }) && e.kind() == std::io::ErrorKind::ConnectionRefused
+        && let Err(err) = std::fs::remove_file(&sock_path)
+    {
+        eprintln!("could not remove stale IPC socket: {err}");
+    }
 
     let listener = UnixDatagram::bind(&sock_path)
         .with_context(|| format!("failed to bind IPC socket at {}", sock_path.display()))?;
@@ -164,10 +157,11 @@ pub(crate) fn listen_for_instances(sender: std::sync::mpsc::Sender<IpcMessage>) 
             if let Ok(len) = listener.recv(&mut buf) {
                 let text = String::from_utf8_lossy(&buf[..len]);
                 if let Some(message) = parse_ipc_message(&text)
-                    && let Err(err) = sender.send(message) {
-                        eprintln!("IPC channel closed, stopping listener: {err}");
-                        return;
-                    }
+                    && let Err(err) = sender.send(message)
+                {
+                    eprintln!("IPC channel closed, stopping listener: {err}");
+                    return;
+                }
             }
         }
     });
@@ -179,9 +173,7 @@ pub(crate) fn try_send_to_existing_instance(paths: &[PathBuf]) -> bool {
     use std::io::Write;
     use std::net::TcpStream;
 
-    let lock_path = dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("wzed.port");
+    let lock_path = dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")).join("wzed.port");
     let port_str = match std::fs::read_to_string(&lock_path) {
         Ok(s) => s,
         Err(_) => return false,
@@ -209,9 +201,7 @@ pub(crate) fn try_send_command_to_existing_instance(command: &str) -> bool {
     use std::io::Write;
     use std::net::TcpStream;
 
-    let lock_path = dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("wzed.port");
+    let lock_path = dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")).join("wzed.port");
     let port_str = match std::fs::read_to_string(&lock_path) {
         Ok(s) => s,
         Err(_) => return false,
@@ -236,9 +226,7 @@ pub(crate) fn listen_for_instances(sender: std::sync::mpsc::Sender<IpcMessage>) 
     use std::net::{TcpListener, TcpStream};
     use std::thread;
 
-    let lock_path = dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("wzed.port");
+    let lock_path = dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")).join("wzed.port");
 
     if let Ok(port_str) = std::fs::read_to_string(&lock_path) {
         if let Ok(port) = port_str.trim().parse::<u16>() {
@@ -252,8 +240,7 @@ pub(crate) fn listen_for_instances(sender: std::sync::mpsc::Sender<IpcMessage>) 
         }
     }
 
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .context("failed to bind IPC listener")?;
+    let listener = TcpListener::bind("127.0.0.1:0").context("failed to bind IPC listener")?;
     let port = listener.local_addr()?.port();
 
     if let Some(parent) = lock_path.parent() {
@@ -269,9 +256,9 @@ pub(crate) fn listen_for_instances(sender: std::sync::mpsc::Sender<IpcMessage>) 
                     let text = String::from_utf8_lossy(&buf[..len]);
                     if let Some(message) = parse_ipc_message(&text) {
                         if let Err(err) = sender.send(message) {
-                        eprintln!("IPC channel closed, stopping listener: {err}");
-                        return;
-                    }
+                            eprintln!("IPC channel closed, stopping listener: {err}");
+                            return;
+                        }
                     }
                 }
             }

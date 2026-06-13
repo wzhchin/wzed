@@ -8,14 +8,13 @@ pub(crate) fn config_dir() -> PathBuf {
 
 pub(crate) fn ensure_config_dir() -> Result<PathBuf> {
     let dir = config_dir();
-    std::fs::create_dir_all(&dir).with_context(|| format!("failed to create config dir: {}", dir.display()))?;
+    std::fs::create_dir_all(&dir)
+        .with_context(|| format!("failed to create config dir: {}", dir.display()))?;
     Ok(dir)
 }
 
 pub(crate) fn file_name_from_path(path: &Path) -> String {
-    path.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "untitled".into())
+    path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "untitled".into())
 }
 
 // 用本地墙钟时间，方便人眼看懂新建 tab 的创建时刻
@@ -38,8 +37,21 @@ pub(crate) fn format_action_name(name: &str) -> String {
 /// Grammar identifiers for language registration, command center, and IPC.
 /// Add new languages here — all consumers reference this single list.
 pub(crate) const GRAMMAR_NAMES: &[&str] = &[
-    "bash", "c", "cpp", "css", "diff", "go", "json", "jsonc", "markdown",
-    "python", "regex", "rust", "tsx", "typescript", "yaml",
+    "bash",
+    "c",
+    "cpp",
+    "css",
+    "diff",
+    "go",
+    "json",
+    "jsonc",
+    "markdown",
+    "python",
+    "regex",
+    "rust",
+    "tsx",
+    "typescript",
+    "yaml",
 ];
 
 /// Centralized tunable constants. Single source of truth for all magic numbers.
@@ -54,8 +66,21 @@ impl AppConfig {
 
 /// Human-readable display names matching [`GRAMMAR_NAMES`] 1:1.
 pub(crate) const GRAMMAR_DISPLAY_NAMES: &[&str] = &[
-    "Bash", "C", "C++", "CSS", "Diff", "Go", "JSON", "JSONC", "Markdown",
-    "Python", "Regex", "Rust", "TSX", "TypeScript", "YAML",
+    "Bash",
+    "C",
+    "C++",
+    "CSS",
+    "Diff",
+    "Go",
+    "JSON",
+    "JSONC",
+    "Markdown",
+    "Python",
+    "Regex",
+    "Rust",
+    "TSX",
+    "TypeScript",
+    "YAML",
 ];
 
 #[cfg(test)]
@@ -188,10 +213,7 @@ mod tests {
 
     #[test]
     fn test_ipc_format_command_save_as() {
-        assert_eq!(
-            crate::ipc::format_command_message("save-as:/tmp/out.rs"),
-            "SAVEAS:/tmp/out.rs"
-        );
+        assert_eq!(crate::ipc::format_command_message("save-as:/tmp/out.rs"), "SAVEAS:/tmp/out.rs");
     }
 
     #[test]
@@ -202,7 +224,10 @@ mod tests {
     #[test]
     fn test_diff_identical() {
         let state = crate::diff_view::compute_diff(
-            "hello\nworld\n", "hello\nworld\n", "a".into(), "b".into(),
+            "hello\nworld\n",
+            "hello\nworld\n",
+            "a".into(),
+            "b".into(),
         );
         assert_eq!(state.lines.len(), 2);
     }
@@ -215,27 +240,21 @@ mod tests {
 
     #[test]
     fn test_diff_added_line() {
-        let state = crate::diff_view::compute_diff(
-            "a\n", "a\nb\n", "left".into(), "right".into(),
-        );
+        let state = crate::diff_view::compute_diff("a\n", "a\nb\n", "left".into(), "right".into());
         assert_eq!(state.lines.len(), 2);
         assert_eq!(state.lines[1].1.kind, crate::diff_view::DiffLineKind::Added);
     }
 
     #[test]
     fn test_diff_removed_line() {
-        let state = crate::diff_view::compute_diff(
-            "a\nb\n", "a\n", "left".into(), "right".into(),
-        );
+        let state = crate::diff_view::compute_diff("a\nb\n", "a\n", "left".into(), "right".into());
         assert_eq!(state.lines.len(), 2);
         assert_eq!(state.lines[1].0.kind, crate::diff_view::DiffLineKind::Removed);
     }
 
     #[test]
     fn test_diff_all_changed() {
-        let state = crate::diff_view::compute_diff(
-            "old\n", "new\n", "l".into(), "r".into(),
-        );
+        let state = crate::diff_view::compute_diff("old\n", "new\n", "l".into(), "r".into());
         assert_eq!(state.lines.len(), 1);
         assert_eq!(state.lines[0].0.kind, crate::diff_view::DiffLineKind::Removed);
         assert_eq!(state.lines[0].1.kind, crate::diff_view::DiffLineKind::Added);

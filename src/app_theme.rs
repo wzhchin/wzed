@@ -96,20 +96,14 @@ impl WzedThemeSettings {
         let default_buffer = "Monospace";
         Self {
             ui_font: Font {
-                family: settings
-                    .ui_font_family
-                    .unwrap_or_else(|| default_ui.into())
-                    .into(),
+                family: settings.ui_font_family.unwrap_or_else(|| default_ui.into()).into(),
                 weight: FontWeight::NORMAL,
                 style: FontStyle::Normal,
                 features: FontFeatures::default(),
                 fallbacks: None,
             },
             buffer_font: Font {
-                family: settings
-                    .buffer_font_family
-                    .unwrap_or_else(|| default_buffer.into())
-                    .into(),
+                family: settings.buffer_font_family.unwrap_or_else(|| default_buffer.into()).into(),
                 weight: FontWeight::NORMAL,
                 style: FontStyle::Normal,
                 features: FontFeatures::default(),

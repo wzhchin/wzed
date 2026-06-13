@@ -1,5 +1,5 @@
-use gpui::*;
 use gpui::prelude::FluentBuilder as _;
+use gpui::*;
 
 use crate::app_theme::colors;
 use crate::workspace::LiteWorkspace;
@@ -190,9 +190,10 @@ impl LiteWorkspace {
             }
             CommandSubmenu::RecentFiles => {
                 if let Some(path) = self.recent_files.entries.get(index).cloned()
-                    && let Err(err) = self.open_file_path(path, window, cx) {
-                        self.show_notification(format!("Failed to open file: {err:#}"), cx);
-                    }
+                    && let Err(err) = self.open_file_path(path, window, cx)
+                {
+                    self.show_notification(format!("Failed to open file: {err:#}"), cx);
+                }
             }
         }
     }
@@ -216,11 +217,13 @@ pub(crate) fn render_command_center(
         Some(CommandSubmenu::ChangeFileType) => {
             crate::utils::GRAMMAR_DISPLAY_NAMES.iter().map(|s| s.to_string()).collect()
         }
-        Some(CommandSubmenu::RecentFiles) => {
-            this.recent_files.entries.iter().take(20)
-                .filter_map(|p| p.to_str().map(|s| s.to_string()))
-                .collect()
-        }
+        Some(CommandSubmenu::RecentFiles) => this
+            .recent_files
+            .entries
+            .iter()
+            .take(20)
+            .filter_map(|p| p.to_str().map(|s| s.to_string()))
+            .collect(),
         None => Vec::new(),
     };
     let submenu_title: Option<&str> = match &this.command_submenu {
@@ -232,9 +235,10 @@ pub(crate) fn render_command_center(
     };
     let submenu_clone = this.command_submenu.clone();
     let is_submenu = this.command_submenu.is_some();
-    let current_encoding_label = this.tabs.get(this.active).map(|tab| {
-        crate::encoding::encoding_label(tab.encoding).to_string()
-    });
+    let current_encoding_label = this
+        .tabs
+        .get(this.active)
+        .map(|tab| crate::encoding::encoding_label(tab.encoding).to_string());
 
     let all_commands = collect_commands(cx);
 
@@ -300,8 +304,7 @@ pub(crate) fn render_command_center(
                     let filtered_for_keys = filtered.clone();
                     let submenu_for_keys = submenu_clone.clone();
                     let cmds_for_enter = all_commands.clone();
-                    cx.listener(
-                        move |this, event: &KeyDownEvent, window, cx| {
+                    cx.listener(move |this, event: &KeyDownEvent, window, cx| {
                         match event.keystroke.key.as_str() {
                             "escape" => {
                                 if this.command_submenu.is_some() {
@@ -325,7 +328,8 @@ pub(crate) fn render_command_center(
                                 cx.notify();
                             }
                             "enter" => {
-                                let query = this.command_center_editor.read(cx).text(cx).to_string();
+                                let query =
+                                    this.command_center_editor.read(cx).text(cx).to_string();
                                 let query_lower = query.to_lowercase();
                                 if is_submenu {
                                     let selected_idx = filtered_for_keys
@@ -333,12 +337,7 @@ pub(crate) fn render_command_center(
                                         .map(|(i, _)| *i)
                                         .unwrap_or(0);
                                     if let Some(ref sub) = submenu_for_keys {
-                                        this.execute_submenu_item(
-                                            sub,
-                                            selected_idx,
-                                            window,
-                                            cx,
-                                        );
+                                        this.execute_submenu_item(sub, selected_idx, window, cx);
                                     }
                                 } else {
                                     let visible: Vec<&CommandEntry> = cmds_for_enter
@@ -347,9 +346,9 @@ pub(crate) fn render_command_center(
                                             if query.is_empty() {
                                                 true
                                             } else {
-                                                cmd.display_name.to_lowercase().contains(
-                                                    &query_lower,
-                                                )
+                                                cmd.display_name
+                                                    .to_lowercase()
+                                                    .contains(&query_lower)
                                             }
                                         })
                                         .collect();
@@ -360,8 +359,7 @@ pub(crate) fn render_command_center(
                             }
                             _ => {}
                         }
-                    },
-                    )
+                    })
                 })
                 .child(
                     div()
@@ -372,16 +370,9 @@ pub(crate) fn render_command_center(
                         .py(px(6.0))
                         .border_b_1()
                         .border_color(colors::BG_HOVER)
-                        .child(
-                            div()
-                                .text_size(px(13.0))
-                                .text_color(colors::TEXT_SECONDARY)
-                                .child(if is_submenu {
-                                    submenu_title.unwrap_or("M-x")
-                                } else {
-                                    "M-x "
-                                }),
-                        )
+                        .child(div().text_size(px(13.0)).text_color(colors::TEXT_SECONDARY).child(
+                            if is_submenu { submenu_title.unwrap_or("M-x") } else { "M-x " },
+                        ))
                         .child(
                             div()
                                 .flex_1()
@@ -390,62 +381,47 @@ pub(crate) fn render_command_center(
                                 .child(cc_editor),
                         ),
                 )
-                .child(
-                    div()
-                        .id("command-list")
-                        .flex()
-                        .flex_col()
-                        .overflow_y_scroll()
-                        .children(filtered.iter().enumerate().map(
-                            |(i, (cmd_idx, cmd))| {
-                                let is_selected = i == selected;
-                                let cmd_text = cmd.clone();
-                                let click_idx = *cmd_idx;
-                                let is_current = matches!(&this.command_submenu, Some(CommandSubmenu::ChangeEncoding))
-                                    && current_encoding_label.as_deref() == Some(cmd.as_str());
-                                let display_text = if is_current {
-                                    format!("● {cmd_text}")
-                                } else {
-                                    cmd_text.clone()
-                                };
-                                div()
-                                    .id(ElementId::Name(
-                                        format!("cmd-{cmd_idx}").into(),
-                                    ))
-                                    .px(px(12.0))
-                                    .py(px(6.0))
-                                    .text_size(px(13.0))
-                                    .cursor_pointer()
-                                    .text_color(if is_selected {
-                                        colors::TEXT_SELECTED
+                .child(div().id("command-list").flex().flex_col().overflow_y_scroll().children(
+                    filtered.iter().enumerate().map(|(i, (cmd_idx, cmd))| {
+                        let is_selected = i == selected;
+                        let cmd_text = cmd.clone();
+                        let click_idx = *cmd_idx;
+                        let is_current =
+                            matches!(&this.command_submenu, Some(CommandSubmenu::ChangeEncoding))
+                                && current_encoding_label.as_deref() == Some(cmd.as_str());
+                        let display_text =
+                            if is_current { format!("● {cmd_text}") } else { cmd_text.clone() };
+                        div()
+                            .id(ElementId::Name(format!("cmd-{cmd_idx}").into()))
+                            .px(px(12.0))
+                            .py(px(6.0))
+                            .text_size(px(13.0))
+                            .cursor_pointer()
+                            .text_color(if is_selected {
+                                colors::TEXT_SELECTED
+                            } else {
+                                colors::TEXT_BRIGHT
+                            })
+                            .when(is_selected, |el| el.bg(colors::ACCENT_SELECTED))
+                            .hover(|s| s.bg(colors::ACCENT_HOVER))
+                            .child(display_text)
+                            .on_click({
+                                let sub = submenu_clone.clone();
+                                let click_cmds = all_commands.clone();
+                                cx.listener(move |this, _, window, cx| {
+                                    if let Some(ref sub) = sub {
+                                        this.execute_submenu_item(sub, click_idx, window, cx);
                                     } else {
-                                        colors::TEXT_BRIGHT
-                                    })
-                                    .when(is_selected, |el| {
-                                        el.bg(colors::ACCENT_SELECTED)
-                                    })
-                                    .hover(|s| {
-                                        s.bg(colors::ACCENT_HOVER)
-                                    })
-                                    .child(display_text)
-                                    .on_click({
-                                        let sub = submenu_clone.clone();
-                                        let click_cmds = all_commands.clone();
-                                        cx.listener(
-                                            move |this, _, window, cx| {
-                                                if let Some(ref sub) = sub {
-                                                    this.execute_submenu_item(sub, click_idx, window, cx);
-                                                } else {
-                                                    let entry = click_cmds.iter().find(|cmd| cmd.display_name == cmd_text);
-                                                    if let Some(entry) = entry {
-                                                        this.execute_command(entry, window, cx);
-                                                    }
-                                                }
-                                            },
-                                        )
-                                    })
-                            },
-                        )),
-                ),
+                                        let entry = click_cmds
+                                            .iter()
+                                            .find(|cmd| cmd.display_name == cmd_text);
+                                        if let Some(entry) = entry {
+                                            this.execute_command(entry, window, cx);
+                                        }
+                                    }
+                                })
+                            })
+                    }),
+                )),
         )
 }

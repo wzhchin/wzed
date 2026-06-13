@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use editor::Editor;
-use gpui::*;
 use gpui::prelude::FluentBuilder as _;
+use gpui::*;
 
 use crate::app_theme::colors;
 
@@ -40,9 +40,7 @@ fn icon_path_for_extension(ext: Option<&str>) -> &'static str {
         Some("md") | Some("mdx") => "icons/file_markdown.svg",
         Some("toml") => "icons/file_toml.svg",
         Some("js") | Some("ts") | Some("jsx") | Some("tsx") | Some("py") | Some("go")
-        | Some("c") | Some("h") | Some("cpp") | Some("java") | Some("rb") => {
-            "icons/file_code.svg"
-        }
+        | Some("c") | Some("h") | Some("cpp") | Some("java") | Some("rb") => "icons/file_code.svg",
         Some("json") | Some("yaml") | Some("yml") | Some("xml") | Some("ini") | Some("cfg") => {
             "icons/file_generic.svg"
         }
@@ -137,16 +135,9 @@ pub(crate) fn render_tab_list(
         let title = tab.title.clone();
         let icon_path = icon_path_for_extension(tab.file_extension.as_deref());
 
-        let dragged = DraggedTab {
-            index: idx,
-            title: title.clone(),
-        };
+        let dragged = DraggedTab { index: idx, title: title.clone() };
 
-        let icon_color = if active {
-            colors::TEXT_DEFAULT
-        } else {
-            colors::TEXT_DIM_ICON
-        };
+        let icon_color = if active { colors::TEXT_DEFAULT } else { colors::TEXT_DIM_ICON };
 
         // Right-side action button: pin icon (unpin action) for pinned tabs,
         // close icon for unpinned tabs.
@@ -159,16 +150,8 @@ pub(crate) fn render_tab_list(
                 .size(px(16.0))
                 .rounded(px(3.0))
                 .text_color(colors::GOLD_INACTIVE)
-                .hover(|s| {
-                    s.bg(colors::BG_HOVER)
-                        .text_color(colors::GOLD_ACTIVE)
-                })
-                .child(
-                    svg()
-                        .path("icons/pin.svg")
-                        .size(px(12.0))
-                        .flex_shrink_0(),
-                )
+                .hover(|s| s.bg(colors::BG_HOVER).text_color(colors::GOLD_ACTIVE))
+                .child(svg().path("icons/pin.svg").size(px(12.0)).flex_shrink_0())
                 .on_click(cx.listener(move |workspace, _, _window, cx| {
                     let Some(tab) = workspace.tabs.get_mut(idx) else {
                         return;
@@ -187,16 +170,8 @@ pub(crate) fn render_tab_list(
                 .size(px(16.0))
                 .rounded(px(3.0))
                 .text_color(colors::TEXT_SECONDARY)
-                .hover(|s| {
-                    s.bg(colors::BG_HOVER)
-                        .text_color(colors::TEXT_PRIMARY)
-                })
-                .child(
-                    svg()
-                        .path("icons/close.svg")
-                        .size(px(12.0))
-                        .flex_shrink_0(),
-                )
+                .hover(|s| s.bg(colors::BG_HOVER).text_color(colors::TEXT_PRIMARY))
+                .child(svg().path("icons/close.svg").size(px(12.0)).flex_shrink_0())
                 .on_click(cx.listener(move |workspace, _event, _window, cx| {
                     workspace.close_tab_at(idx, cx);
                 }))
@@ -238,13 +213,7 @@ pub(crate) fn render_tab_list(
                             .child(title),
                     )
                     .when(dirty, |el| {
-                        el.child(
-                            div()
-                                .ml(px(4.0))
-                                .size(px(6.0))
-                                .rounded_full()
-                                .bg(colors::ACCENT),
-                        )
+                        el.child(div().ml(px(4.0)).size(px(6.0)).rounded_full().bg(colors::ACCENT))
                     }),
             )
             .child(action_button)
@@ -263,9 +232,7 @@ pub(crate) fn render_tab_list(
                     cx.notify();
                 }),
             )
-            .on_drag(dragged, |drag: &DraggedTab, _position, _window, cx| {
-                cx.new(|_| drag.clone())
-            })
+            .on_drag(dragged, |drag: &DraggedTab, _position, _window, cx| cx.new(|_| drag.clone()))
             .on_drop(cx.listener(move |this, dragged: &DraggedTab, _window, cx| {
                 let from = dragged.index;
                 let to = idx;
@@ -281,28 +248,19 @@ pub(crate) fn render_tab_list(
                 let active_id = this.tabs[this.active].editor.entity_id();
                 let tab = this.tabs.remove(from);
                 this.tabs.insert(to, tab);
-                this.active = this
-                    .tabs
-                    .iter()
-                    .position(|t| t.editor.entity_id() == active_id)
-                    .unwrap_or(0);
+                this.active =
+                    this.tabs.iter().position(|t| t.editor.entity_id() == active_id).unwrap_or(0);
                 cx.notify();
             }));
 
         if active {
-            tab_el = tab_el
-                .bg(colors::BG_TAB_ACTIVE)
-                .border_l_2()
-                .border_color(if pinned {
-                    colors::GOLD_ACTIVE
-                } else {
-                    colors::ACCENT
-                });
+            tab_el = tab_el.bg(colors::BG_TAB_ACTIVE).border_l_2().border_color(if pinned {
+                colors::GOLD_ACTIVE
+            } else {
+                colors::ACCENT
+            });
         } else if pinned {
-            tab_el = tab_el
-                .bg(colors::BG_PANEL)
-                .border_l_2()
-                .border_color(colors::GOLD_INACTIVE);
+            tab_el = tab_el.bg(colors::BG_PANEL).border_l_2().border_color(colors::GOLD_INACTIVE);
         } else {
             tab_el = tab_el.hover(|s| s.bg(colors::BG_PANEL));
         }

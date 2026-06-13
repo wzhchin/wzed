@@ -28,14 +28,19 @@ pub(crate) fn encode_string(text: &str, encoding: &'static Encoding) -> Result<V
     Ok(cow.into_owned())
 }
 
-pub(crate) fn read_file_with_detection(path: &Path) -> std::io::Result<(String, &'static Encoding)> {
+pub(crate) fn read_file_with_detection(
+    path: &Path,
+) -> std::io::Result<(String, &'static Encoding)> {
     let bytes = std::fs::read(path)?;
     let encoding = detect_encoding(&bytes);
     let text = decode_bytes(&bytes, encoding);
     Ok((text, encoding))
 }
 
-pub(crate) fn read_file_as_encoding(path: &Path, encoding: &'static Encoding) -> std::io::Result<String> {
+pub(crate) fn read_file_as_encoding(
+    path: &Path,
+    encoding: &'static Encoding,
+) -> std::io::Result<String> {
     let bytes = std::fs::read(path)?;
     Ok(decode_bytes(&bytes, encoding))
 }

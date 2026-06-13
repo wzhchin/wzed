@@ -14,9 +14,7 @@ pub(crate) struct FileWatcher {
 
 impl FileWatcher {
     pub(crate) fn new() -> Self {
-        Self {
-            known_mtimes: HashMap::new(),
-        }
+        Self { known_mtimes: HashMap::new() }
     }
 
     // Record that we just wrote `path` so the watcher can suppress the change

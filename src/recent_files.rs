@@ -22,11 +22,8 @@ impl RecentFiles {
                 return;
             }
         };
-        let paths: Vec<String> = self
-            .entries
-            .iter()
-            .filter_map(|p| p.to_str().map(|s| s.to_owned()))
-            .collect();
+        let paths: Vec<String> =
+            self.entries.iter().filter_map(|p| p.to_str().map(|s| s.to_owned())).collect();
         if let Err(err) = std::fs::write(
             dir.join("recent.json"),
             serde_json::to_string(&paths).unwrap_or_default(),
@@ -40,18 +37,15 @@ impl RecentFiles {
         let entries = (|| -> Result<Vec<PathBuf>, anyhow::Error> {
             let content = std::fs::read_to_string(&path)
                 .with_context(|| format!("failed to read recent files from {}", path.display()))?;
-            let paths: Vec<String> = serde_json::from_str(&content)
-                .with_context(|| "failed to parse recent files")?;
+            let paths: Vec<String> =
+                serde_json::from_str(&content).with_context(|| "failed to parse recent files")?;
             Ok(paths.into_iter().map(PathBuf::from).collect())
         })()
         .unwrap_or_else(|err| {
             eprintln!("{err:#}");
             Vec::new()
         });
-        Self {
-            entries,
-            max_entries: crate::utils::AppConfig::MAX_RECENT_FILES,
-        }
+        Self { entries, max_entries: crate::utils::AppConfig::MAX_RECENT_FILES }
     }
 }
 
@@ -60,10 +54,7 @@ mod tests {
     use super::*;
 
     fn make() -> RecentFiles {
-        RecentFiles {
-            entries: Vec::new(),
-            max_entries: 3,
-        }
+        RecentFiles { entries: Vec::new(), max_entries: 3 }
     }
 
     #[test]
