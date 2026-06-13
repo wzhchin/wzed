@@ -41,4 +41,12 @@ jobs:
       - name: Build
         run: cargo build
       - name: Test
+        if: runner.os == 'Linux'
         run: cargo test
+      - name: Build release binary
+        run: cargo build --release
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: wzed-${{ runner.os }}
+          path: target/release/wzed*
