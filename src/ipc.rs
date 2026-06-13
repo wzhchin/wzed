@@ -79,11 +79,10 @@ pub(crate) fn parse_ipc_message(text: &str) -> Option<IpcMessage> {
     if let Some(path) = text.strip_prefix("SAVEAS:") {
         return Some(IpcMessage::SaveAs(PathBuf::from(path)));
     }
-    if let Some(index) = text.strip_prefix("SWITCHTAB:") {
-        if let Ok(idx) = index.parse::<usize>() {
+    if let Some(index) = text.strip_prefix("SWITCHTAB:")
+        && let Ok(idx) = index.parse::<usize>() {
             return Some(IpcMessage::SwitchTab(idx));
         }
-    }
     let paths: Vec<PathBuf> = text
         .split('\n')
         .filter(|s| !s.is_empty())
@@ -152,11 +151,9 @@ pub(crate) fn listen_for_instances(sender: std::sync::mpsc::Sender<IpcMessage>) 
         s.send(&[])
     })
         && e.kind() == std::io::ErrorKind::ConnectionRefused
-    {
-        if let Err(err) = std::fs::remove_file(&sock_path) {
+        && let Err(err) = std::fs::remove_file(&sock_path) {
             eprintln!("could not remove stale IPC socket: {err}");
         }
-    }
 
     let listener = UnixDatagram::bind(&sock_path)
         .with_context(|| format!("failed to bind IPC socket at {}", sock_path.display()))?;
@@ -166,12 +163,11 @@ pub(crate) fn listen_for_instances(sender: std::sync::mpsc::Sender<IpcMessage>) 
         loop {
             if let Ok(len) = listener.recv(&mut buf) {
                 let text = String::from_utf8_lossy(&buf[..len]);
-                if let Some(message) = parse_ipc_message(&text) {
-                    if let Err(err) = sender.send(message) {
+                if let Some(message) = parse_ipc_message(&text)
+                    && let Err(err) = sender.send(message) {
                         eprintln!("IPC channel closed, stopping listener: {err}");
                         return;
                     }
-                }
             }
         }
     });

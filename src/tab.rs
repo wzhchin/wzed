@@ -13,6 +13,9 @@ pub(crate) struct Tab {
     pub group: Option<SharedString>,
     pub encoding: &'static encoding_rs::Encoding,
     pub pinned: bool,
+    // Stable key used to name this tab's snapshot backup so recovery can map a
+    // snapshot back to the right content even after tabs are reordered/closed.
+    pub snapshot_id: u64,
 }
 
 impl Tab {

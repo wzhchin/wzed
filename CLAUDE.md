@@ -12,7 +12,7 @@ cargo run -- -c "new-file"     # send IPC command to running instance
 
 No Rust tests. Manual integration testing via `test-step.md`.
 
-Unit tests exist in `utils.rs` (23), `encoding.rs` (6), `recent_files.rs` (4) — run with `cargo test`. Core UI modules are untested.
+Unit tests exist in `utils.rs` (25), `encoding.rs` (9), `recent_files.rs` (4) — run with `cargo test`. Core UI modules are untested.
 
 ## Architecture
 
@@ -40,5 +40,5 @@ Unit tests exist in `utils.rs` (23), `encoding.rs` (6), `recent_files.rs` (4) �
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-`specs/004-fix-encoding-switch/plan.md`
+`specs/005-fix-file-management/plan.md`
 <!-- SPECKIT END -->

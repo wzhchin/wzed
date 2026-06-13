@@ -13,6 +13,21 @@ pub(crate) fn decode_bytes(bytes: &[u8], encoding: &'static Encoding) -> String 
     cow.into_owned()
 }
 
+// Encode text back into the file's encoding for saving. Returns Err when the
+// text contains characters the encoding cannot represent — we must not write a
+// silently-corrupted file (encoding_rs would otherwise substitute numeric
+// character references), so the caller aborts the save and surfaces the error.
+pub(crate) fn encode_string(text: &str, encoding: &'static Encoding) -> Result<Vec<u8>, String> {
+    let (cow, _encoding_used, had_errors) = encoding.encode(text);
+    if had_errors {
+        return Err(format!(
+            "text contains characters that cannot be encoded in {}",
+            encoding.name()
+        ));
+    }
+    Ok(cow.into_owned())
+}
+
 pub(crate) fn read_file_with_detection(path: &Path) -> std::io::Result<(String, &'static Encoding)> {
     let bytes = std::fs::read(path)?;
     let encoding = detect_encoding(&bytes);
@@ -75,6 +90,30 @@ mod tests {
         let bytes = text.as_bytes();
         let decoded = decode_bytes(bytes, encoding_rs::UTF_8);
         assert_eq!(decoded, text);
+    }
+
+    #[test]
+    fn test_encode_string_utf8_passthrough() {
+        let text = "Hello 你好";
+        let bytes = encode_string(text, encoding_rs::UTF_8).unwrap();
+        assert_eq!(bytes, text.as_bytes());
+    }
+
+    #[test]
+    fn test_encode_string_gbk_roundtrip() {
+        let text = "你好，世界 hello";
+        let bytes = encode_string(text, encoding_rs::GBK).unwrap();
+        // Decoding the encoded bytes must reproduce the original text.
+        assert_eq!(decode_bytes(&bytes, encoding_rs::GBK), text);
+    }
+
+    #[test]
+    fn test_encode_string_unencodable_is_err() {
+        // A Latin-1-style encoding cannot represent CJK characters; the save
+        // must abort rather than silently substitute characters.
+        let latin1 = encoding_from_label("ISO-8859-1").expect("ISO-8859-1 resolves");
+        let result = encode_string("你", latin1);
+        assert!(result.is_err(), "expected Err for unencodable char");
     }
 
     #[test]

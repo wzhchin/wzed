@@ -153,6 +153,12 @@ impl LiteWorkspace {
                         tab.encoding = enc;
                         tab.editor.update(cx, |editor, cx| {
                             editor.set_text(content.as_str(), window, cx);
+                            // Keep the buffer's encoding in sync with the tab so
+                            // the save path re-encodes into the chosen encoding.
+                            let buffer = editor.buffer().read(cx).as_singleton();
+                            if let Some(buffer) = buffer {
+                                buffer.update(cx, |buf, _cx| buf.set_encoding(enc));
+                            }
                         });
                     }
                     Err(err) => {
@@ -183,11 +189,10 @@ impl LiteWorkspace {
                 cx.notify();
             }
             CommandSubmenu::RecentFiles => {
-                if let Some(path) = self.recent_files.entries.get(index).cloned() {
-                    if let Err(err) = self.open_file_path(path, window, cx) {
+                if let Some(path) = self.recent_files.entries.get(index).cloned()
+                    && let Err(err) = self.open_file_path(path, window, cx) {
                         self.show_notification(format!("Failed to open file: {err:#}"), cx);
                     }
-                }
             }
         }
     }

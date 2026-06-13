@@ -18,11 +18,9 @@ pub(crate) fn file_name_from_path(path: &Path) -> String {
         .unwrap_or_else(|| "untitled".into())
 }
 
-pub(crate) fn timestamp_secs() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    format!("{}", now.as_secs())
+// 用本地墙钟时间，方便人眼看懂新建 tab 的创建时刻
+pub(crate) fn untitled_name() -> String {
+    format!("untitled-{}", chrono::Local::now().format("%Y%m%d-%H%M%S"))
 }
 
 pub(crate) fn format_action_name(name: &str) -> String {
@@ -49,7 +47,6 @@ pub(crate) struct AppConfig;
 
 impl AppConfig {
     pub const AUTOSAVE_INTERVAL_SECS: u64 = 30;
-    pub const FILE_WATCHER_POLL_SECS: u64 = 5;
     pub const NOTIFICATION_DISPLAY_SECS: u64 = 4;
     pub const SNAPSHOT_RETENTION_DAYS: u64 = 7;
     pub const MAX_RECENT_FILES: usize = 20;
@@ -111,9 +108,12 @@ mod tests {
     }
 
     #[test]
-    fn test_timestamp_secs() {
-        let ts = timestamp_secs();
-        assert!(ts.parse::<u64>().unwrap() > 0);
+    fn test_untitled_name_format() {
+        let name = untitled_name();
+        assert!(name.starts_with("untitled-"), "got: {name}");
+        // untitled-YYYYMMDD-HHMMSS
+        assert_eq!(name.len(), "untitled-20260613-120000".len());
+        assert_eq!(name.as_bytes()[17], b'-');
     }
 
     #[test]
