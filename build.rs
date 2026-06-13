@@ -40,7 +40,7 @@ fn prepare_windows_icon() {
         .expect("decoding app icon");
 
     // A multi-size .ico looks crisp at every taskbar/Explorer scale.
-    let sizes = [16usize, 32, 48, 64, 128, 256];
+    let sizes = [16u32, 32, 48, 64, 128, 256];
     let frames: Vec<image::codecs::ico::IcoFrame> = sizes
         .iter()
         .map(|&size| {
@@ -48,8 +48,8 @@ fn prepare_windows_icon() {
                 image.resize_exact(size, size, image::imageops::FilterType::Lanczos3).to_rgba8();
             image::codecs::ico::IcoFrame::as_png(
                 rgba.as_raw(),
-                size as u32,
-                size as u32,
+                size,
+                size,
                 image::ExtendedColorType::Rgba8,
             )
             .expect("encoding ico frame")
