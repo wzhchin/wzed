@@ -146,6 +146,8 @@ fn main() {
         {
             let mut editor_settings = EditorSettings::get_global(cx).clone();
             editor_settings.gutter.runnables = false;
+            editor_settings.gutter.breakpoints = false;
+            editor_settings.gutter.bookmarks = false;
             editor_settings.gutter.folds = false;
             EditorSettings::override_global(editor_settings, cx);
         }
