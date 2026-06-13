@@ -77,6 +77,29 @@ actions!(
     ]
 );
 
+// Window icon for X11. The PNG is resized to 256px at build time by build.rs
+// and embedded here; GPUI's WindowOptions.icon only applies on X11, so this is
+// gated to Linux/FreeBSD. Windows gets its icon via a PE resource instead.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+static APP_ICON: std::sync::LazyLock<Option<Arc<image::RgbaImage>>> =
+    std::sync::LazyLock::new(|| {
+        const BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/app_icon.png"));
+        let reader = match image::ImageReader::new(std::io::Cursor::new(BYTES)).with_guessed_format() {
+            Ok(reader) => reader,
+            Err(err) => {
+                eprintln!("failed to guess embedded app icon format: {err}");
+                return None;
+            }
+        };
+        match reader.decode() {
+            Ok(image) => Some(Arc::new(image.into())),
+            Err(err) => {
+                eprintln!("failed to decode embedded app icon: {err:#}");
+                None
+            }
+        }
+    });
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let mut file_args: Vec<PathBuf> = Vec::new();
@@ -311,6 +334,10 @@ fn main() {
         .detach();
 
         let file_args = file_args.clone();
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        let icon = APP_ICON.as_ref().cloned();
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+        let icon: Option<Arc<image::RgbaImage>> = None;
         let window_handle = cx
             .open_window(
                 WindowOptions {
@@ -335,7 +362,7 @@ fn main() {
                     app_id: Some("dev.wzed.editor".to_string()),
                     window_min_size: Some(size(px(400.0), px(300.0))),
                     window_decorations: Some(WindowDecorations::Client),
-                    icon: None,
+                    icon,
                     tabbing_identifier: None,
                 },
                 move |window, cx| {

@@ -34,8 +34,17 @@ futures = "0.3"
 [target.'cfg(unix)'.dependencies]
 gpui_linux = { workspace = true }
 
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+image = "0.25"
+
 [target.'cfg(windows)'.dependencies]
 gpui_windows = { workspace = true }
+
+[build-dependencies]
+image = "0.25"
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
+winresource = "0.1"
 
 [workspace.dependencies]
 # Zed crates are sourced from the zed-industries/zed GitHub repo at a pinned rev.
