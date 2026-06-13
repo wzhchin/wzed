@@ -325,6 +325,7 @@ impl LiteWorkspace {
         if self.active >= self.tabs.len() {
             self.active = self.tabs.len().saturating_sub(1);
         }
+        self.sort_tabs_pinned_first();
     }
 
     fn create_tab(
@@ -624,19 +625,36 @@ impl LiteWorkspace {
         self.close_tab_at(self.active, cx);
     }
 
+    /// Reorder tabs so all pinned tabs come before unpinned tabs, preserving
+    /// relative order within each group. Recalculates `self.active` to track
+    /// the same editor after reorder.
+    fn sort_tabs_pinned_first(&mut self) {
+        let active_id = self.tabs[self.active].editor.entity_id();
+        let (pinned, mut unpinned): (Vec<_>, Vec<_>) =
+            std::mem::take(&mut self.tabs).into_iter().partition(|t| t.pinned);
+        self.tabs = pinned;
+        self.tabs.append(&mut unpinned);
+        self.active = self
+            .tabs
+            .iter()
+            .position(|t| t.editor.entity_id() == active_id)
+            .unwrap_or(0);
+    }
+
     pub(crate) fn close_tab_at(&mut self, index: usize, cx: &mut Context<Self>) {
         if self.tabs.len() <= 1 {
             return;
         }
-        if let Some(tab) = self.tabs.get(index) {
-            if tab.is_dirty(cx) {
-                self.save_snapshot_for_tab(index, tab, cx);
-            }
-        }
-        self.tabs.remove(index);
-        if self.tabs.is_empty() {
+        if index >= self.tabs.len() {
             return;
         }
+        if self.tabs[index].pinned {
+            return;
+        }
+        if self.tabs[index].is_dirty(cx) {
+            self.save_snapshot_for_tab(index, &self.tabs[index], cx);
+        }
+        self.tabs.remove(index);
         if self.active >= self.tabs.len() {
             self.active = self.tabs.len() - 1;
         } else if index <= self.active && self.active > 0 {
@@ -861,6 +879,9 @@ impl LiteWorkspace {
 
 impl Render for LiteWorkspace {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.active >= self.tabs.len() {
+            self.active = self.tabs.len().saturating_sub(1);
+        }
         let active_tab = &self.tabs[self.active];
 
         self.last_scrolled_active = self.active;
@@ -946,6 +967,7 @@ impl Render for LiteWorkspace {
                                         return;
                                     };
                                     tab.pinned = !tab.pinned;
+                                    workspace.sort_tabs_pinned_first();
                                     workspace.show_tab_context_menu = false;
                                     workspace.save_session(cx);
                                     cx.notify();
@@ -1002,12 +1024,13 @@ impl Render for LiteWorkspace {
         let multi_tab_results = crate::search::render_multi_tab_results(self, cx);
 
         div()
+            .id("workspace-root")
             .relative()
             .flex()
             .flex_col()
             .size_full()
             .bg(colors::BG_BASE)
-            .capture_any_mouse_down(cx.listener(|workspace, _event, _window, cx| {
+            .on_click(cx.listener(|workspace, _event, _window, cx| {
                 if workspace.show_tab_context_menu {
                     workspace.show_tab_context_menu = false;
                     cx.notify();

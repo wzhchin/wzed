@@ -81,8 +81,27 @@ pub(crate) fn render_tab_list(
     let mut active_child_index = 0usize;
     let mut active_tab_index = 0usize;
     let mut child_index = 0usize;
+    let mut seen_pinned = false;
 
     for tab in tabs {
+        // Divider between pinned and unpinned sections
+        let entering_unpinned = !tab.is_pinned && seen_pinned;
+        if tab.is_pinned {
+            seen_pinned = true;
+        }
+
+        if entering_unpinned {
+            children.push(
+                div()
+                    .border_b_1()
+                    .border_color(colors::BG_BORDER)
+                    .mx(px(8.0))
+                    .my(px(2.0))
+                    .into_any_element(),
+            );
+            child_index += 1;
+        }
+
         if let Some(ref group) = tab.group {
             if last_group != Some(group) {
                 children.push(
@@ -124,6 +143,61 @@ pub(crate) fn render_tab_list(
             colors::TEXT_DEFAULT
         } else {
             colors::TEXT_DIM_ICON
+        };
+
+        // Right-side action button: pin icon (unpin action) for pinned tabs,
+        // close icon for unpinned tabs.
+        let action_button = if pinned {
+            div()
+                .id(ElementId::Name(format!("tab-pin-{idx}").into()))
+                .flex()
+                .items_center()
+                .justify_center()
+                .size(px(16.0))
+                .rounded(px(3.0))
+                .text_color(colors::GOLD_INACTIVE)
+                .hover(|s| {
+                    s.bg(colors::BG_HOVER)
+                        .text_color(colors::GOLD_ACTIVE)
+                })
+                .child(
+                    svg()
+                        .path("icons/pin.svg")
+                        .size(px(12.0))
+                        .flex_shrink_0(),
+                )
+                .on_click(cx.listener(move |workspace, _, _window, cx| {
+                    let Some(tab) = workspace.tabs.get_mut(idx) else {
+                        return;
+                    };
+                    tab.pinned = false;
+                    workspace.save_session(cx);
+                    cx.notify();
+                }))
+                .into_any_element()
+        } else {
+            div()
+                .id(ElementId::Name(format!("tab-close-{idx}").into()))
+                .flex()
+                .items_center()
+                .justify_center()
+                .size(px(16.0))
+                .rounded(px(3.0))
+                .text_color(colors::TEXT_SECONDARY)
+                .hover(|s| {
+                    s.bg(colors::BG_HOVER)
+                        .text_color(colors::TEXT_PRIMARY)
+                })
+                .child(
+                    svg()
+                        .path("icons/close.svg")
+                        .size(px(12.0))
+                        .flex_shrink_0(),
+                )
+                .on_click(cx.listener(move |workspace, _event, _window, cx| {
+                    workspace.close_tab_at(idx, cx);
+                }))
+                .into_any_element()
         };
 
         let mut tab_el = div()
@@ -170,29 +244,7 @@ pub(crate) fn render_tab_list(
                         )
                     }),
             )
-            .child(
-                div()
-                    .id(ElementId::Name(format!("tab-close-{idx}").into()))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .size(px(16.0))
-                    .rounded(px(3.0))
-                    .text_color(colors::TEXT_SECONDARY)
-                    .hover(|s| {
-                        s.bg(colors::BG_HOVER)
-                            .text_color(colors::TEXT_PRIMARY)
-                    })
-                    .child(
-                        svg()
-                            .path("icons/close.svg")
-                            .size(px(12.0))
-                            .flex_shrink_0(),
-                    )
-                    .on_click(cx.listener(move |workspace, _event, _window, cx| {
-                        workspace.close_tab_at(idx, cx);
-                    })),
-            )
+            .child(action_button)
             .on_click(cx.listener(move |workspace, _, _window, cx| {
                 workspace.active = idx;
                 cx.notify();
@@ -215,6 +267,12 @@ pub(crate) fn render_tab_list(
                 let from = dragged.index;
                 let to = idx;
                 if from == to || from >= this.tabs.len() || to >= this.tabs.len() {
+                    return;
+                }
+                let pinned_count = this.tabs.iter().take_while(|t| t.pinned).count();
+                let from_is_pinned = from < pinned_count;
+                let to_is_pinned = to < pinned_count;
+                if from_is_pinned != to_is_pinned {
                     return;
                 }
                 let active_id = this.tabs[this.active].editor.entity_id();
