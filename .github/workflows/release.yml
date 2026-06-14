@@ -1,0 +1,96 @@
+name: Release
+
+# Build release binaries for Linux and Windows on every version tag (v*) and
+# attach them — plus the Linux .desktop file and themed icons — to a GitHub
+# Release. Tag locally with:  git tag v0.1.0 && git push origin v0.1.0
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # action-gh-release needs this to create the release
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: wzed-linux-amd64
+          - os: windows-latest
+            artifact: wzed-windows-amd64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libfontconfig1-dev libwayland-dev libx11-dev libegl-dev libgl-dev
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-release-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-release-cargo-
+      - name: Build release binary
+        run: cargo build --release
+
+      # Linux: bundle the binary with the .desktop file and hicolor icons so a
+      # user can `tar xf` and `make install` (or copy by hand) for Wayland icon
+      # resolution. X11 still uses the embedded WindowOptions.icon.
+      - name: Package Linux bundle
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p bundle/bin bundle/share/applications
+          mkdir -p bundle/share/icons/hicolor
+          cp target/release/wzed bundle/bin/wzed
+          cp dist/dev.wzed.editor.desktop bundle/share/applications/
+          for size in 16 22 32 48 64 128 256; do
+            mkdir -p "bundle/share/icons/hicolor/${size}x${size}/apps"
+            cp "dist/icons/${size}.png" \
+               "bundle/share/icons/hicolor/${size}x${size}/apps/dev.wzed.editor.png"
+          done
+          tar czf ${{ matrix.artifact }}.tar.gz -C bundle .
+      - name: Package Windows zip
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          mkdir bundle
+          Copy-Item target/release/wzed.exe bundle/
+          Compress-Archive -Path bundle/* -DestinationPath ${{ matrix.artifact }}.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            ${{ matrix.artifact }}.tar.gz
+            ${{ matrix.artifact }}.zip
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.zip
