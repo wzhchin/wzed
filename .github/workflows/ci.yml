@@ -22,7 +22,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxkbcommon-dev libfontconfig1-dev libwayland-dev libx11-dev libegl-dev libgl-dev
+          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libfontconfig1-dev libwayland-dev libx11-dev libegl-dev libgl-dev
       - name: Cache cargo
         uses: actions/cache@v4
         with:
