@@ -230,12 +230,19 @@ pub(crate) fn listen_for_instances(sender: std::sync::mpsc::Sender<IpcMessage>) 
 
     if let Ok(port_str) = std::fs::read_to_string(&lock_path) {
         if let Ok(port) = port_str.trim().parse::<u16>() {
-            if TcpStream::connect(format!("127.0.0.1:{port}")).is_err() {
-                if let Err(err) = std::fs::remove_file(&lock_path) {
-                    eprintln!("could not remove stale port lock: {err}");
+            // Bounded probe: a plain connect() to 127.0.0.1 refuses fast when no
+            // one listens, but if the port is taken by something else (firewall
+            // silent-drop, a hung non-wzed process) it can block the UI thread for
+            // the OS connect timeout. A 150ms deadline keeps startup snappy.
+            let addr: std::net::SocketAddr = format!("127.0.0.1:{port}").parse()?;
+            match std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(150))
+            {
+                Ok(_) => anyhow::bail!("another WZed instance is already running on port {port}"),
+                Err(_) => {
+                    if let Err(err) = std::fs::remove_file(&lock_path) {
+                        eprintln!("could not remove stale port lock: {err}");
+                    }
                 }
-            } else {
-                anyhow::bail!("another WZed instance is already running on port {port}");
             }
         }
     }

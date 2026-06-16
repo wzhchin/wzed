@@ -1,3 +1,8 @@
+// Release builds use the GUI subsystem so Windows doesn't allocate a console
+// window (which both flashes an annoying cmd prompt and slows startup). Debug
+// builds keep the console so panic output and eprintln are visible.
+#![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
+
 mod app_theme;
 mod command_center;
 mod diff_view;

@@ -1076,7 +1076,7 @@ impl LiteWorkspace {
 }
 
 impl Render for LiteWorkspace {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.active >= self.tabs.len() {
             self.active = self.tabs.len().saturating_sub(1);
         }
@@ -1084,6 +1084,8 @@ impl Render for LiteWorkspace {
 
         self.last_scrolled_active = self.active;
         let toolbar = self.show_toolbar.then(|| topbar::render_toolbar(self, cx));
+        #[cfg(target_os = "windows")]
+        let title_bar = topbar::render_title_bar(window);
 
         let tab_infos: Vec<tab::TabInfo> = self
             .tabs
@@ -1230,6 +1232,18 @@ impl Render for LiteWorkspace {
                     cx.notify();
                 }
             }))
+            // The native title bar is suppressed on Windows (client-drawn
+            // instead), so render our own here. Other platforms keep native chrome.
+            .when(cfg!(target_os = "windows"), |el| {
+                #[cfg(target_os = "windows")]
+                {
+                    el.child(title_bar)
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    el
+                }
+            })
             .children(toolbar)
             .child(
                 div().flex().flex_row().flex_1().overflow_hidden().child(side_tabs).child(
@@ -1280,7 +1294,7 @@ impl Render for LiteWorkspace {
             .on_action(cx.listener(Self::handle_compare_files))
             .on_action(cx.listener(Self::handle_toggle_command_center))
             .when(self.show_command_center, |el| {
-                el.child(command_center::render_command_center(self, _window, cx))
+                el.child(command_center::render_command_center(self, window, cx))
             })
             .when(
                 self.notification.as_ref().is_some_and(|(_, instant)| {
