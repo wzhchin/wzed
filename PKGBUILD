@@ -1,16 +1,18 @@
 # Maintainer: wangzh <wzhchin@gmail.com>
 #
-# Packages the tagged release (v$pkgver) from GitHub. The build is Wayland-only:
-# upstream's Cargo.toml disables gpui_linux's x11 backend, so the binary links no
-# libxcb / libxkbcommon-x11. GPU (EGL/GL) and the Wayland client are dlopen'd at
-# runtime like the upstream editor.
+# Local-source PKGBUILD: builds wzed straight from this checkout (the directory
+# holding this PKGBUILD), no remote download. Wayland-only — Cargo.toml disables
+# gpui_linux's x11 backend, so the binary links no libxcb / libxkbcommon-x11.
+# GPU (EGL/GL) and the Wayland client are dlopen'd at runtime.
 #
-# Prerequisite: the v$pkgver tag must already contain the no-x11 Cargo.toml
-# change. After tagging, refresh the source checksum with:
-#   updpkgsums && makepkg --printsrcinfo > .SRCINFO
+# makepkg runs the functions from an empty $srcdir, so each one cd's back to
+# $startdir (this directory) to build in place and reuse the existing target/.
+#
+# Usage, from the repo root:
+#   makepkg -si
 
 pkgname=wzed
-pkgver=0.1.1
+pkgver=0.1.0
 pkgrel=1
 pkgdesc="Lightweight text editor based on Zed's GPUI editor (Wayland-only)"
 arch=('x86_64' 'aarch64')
@@ -32,32 +34,40 @@ makedepends=(
 )
 checkdepends=('cargo')
 
-source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('SKIP')
+# No source array: the package is built from this very checkout. $startdir is
+# where makepkg found the PKGBUILD, i.e. the repo root.
+#
+# !lto: makepkg's default CFLAGS/LDFLAGS add -flto, which compiles the bundled
+# libgit2-sys (a C crate) to GCC LTO bitcode. The Rust linker (rust-lld/LLVM)
+# then can't resolve those symbols — `undefined symbol: git_libgit2_init`.
+# Rust/LLVM and GCC LTO are incompatible; disable LTO for the whole build.
+options=('!strip' '!lto')
 
-# Keep Cargo's downloads and the Zed-crate git checkouts inside $srcdir so the
-# build is hermetic and nothing leaks into the maintainer's home.
-export CARGO_HOME="$srcdir/cargo-home"
+pkgver() {
+    cd "$startdir"
+    # Derive from Cargo.toml so this never drifts from the actual package version.
+    grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/'
+}
 
 prepare() {
-    default_prepare
+    cd "$startdir"
     # Honor the committed Cargo.lock — fail loudly if it's drifted from
     # Cargo.toml instead of silently rewriting it.
     cargo fetch --locked --target "$CARCH-unknown-linux-gnu"
 }
 
 build() {
-    cd "$pkgname-$pkgver"
+    cd "$startdir"
     cargo build --release --frozen
 }
 
 check() {
-    cd "$pkgname-$pkgver"
+    cd "$startdir"
     cargo test --frozen
 }
 
 package() {
-    cd "$pkgname-$pkgver"
+    cd "$startdir"
 
     install -Dm755 "target/release/$pkgname" "$pkgdir/usr/bin/$pkgname"
 
