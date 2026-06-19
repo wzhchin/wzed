@@ -32,7 +32,10 @@ chrono = "0.4"
 futures = "0.3"
 
 [target.'cfg(unix)'.dependencies]
-gpui_linux = { workspace = true }
+# Wayland-only: gpui_linux's default features pull in both `wayland` and `x11`,
+# and the `x11` backend drags in libxcb / libxkbcommon-x11. We never target X11,
+# so drop the defaults and enable just `wayland`.
+gpui_linux = { workspace = true, default-features = false, features = ["wayland"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 image = "0.25"
@@ -64,5 +67,5 @@ fs = { git = "https://github.com/zed-industries/zed", rev = "4ce18741ad2ea007cb2
 clock = { git = "https://github.com/zed-industries/zed", rev = "4ce18741ad2ea007cb20a1dd96d2a170d224cc01" }
 util = { git = "https://github.com/zed-industries/zed", rev = "4ce18741ad2ea007cb20a1dd96d2a170d224cc01" }
 collections = { git = "https://github.com/zed-industries/zed", rev = "4ce18741ad2ea007cb20a1dd96d2a170d224cc01" }
-gpui_linux = { git = "https://github.com/zed-industries/zed", rev = "4ce18741ad2ea007cb20a1dd96d2a170d224cc01" }
+gpui_linux = { git = "https://github.com/zed-industries/zed", rev = "4ce18741ad2ea007cb20a1dd96d2a170d224cc01", default-features = false }
 gpui_windows = { git = "https://github.com/zed-industries/zed", rev = "4ce18741ad2ea007cb20a1dd96d2a170d224cc01" }

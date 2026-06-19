@@ -17,7 +17,9 @@
       "Bash(cargo add *)",
       "WebSearch",
       "Bash(git rm *)",
-      "Bash"
+      "Bash",
+      "Bash(x11)",
+      "Bash(grep -iE \"Compiling gpui_linux|cannot find `x11`|x11/client.rs\")"
     ],
     "additionalDirectories": [
       "/home/chin/repos/wzed-ws/zed"
