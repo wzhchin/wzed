@@ -42,6 +42,14 @@ struct SessionState {
     // monotonically increasing ids that never collide with old snapshots.
     #[serde(default)]
     next_snapshot_id: u64,
+    // Whether the top toolbar is shown. Defaults to true so sessions saved
+    // before this field existed (or with it absent) keep the toolbar visible.
+    #[serde(default = "default_show_toolbar")]
+    show_toolbar: bool,
+}
+
+fn default_show_toolbar() -> bool {
+    true
 }
 
 #[derive(Serialize, Deserialize)]
@@ -85,6 +93,7 @@ fn save_session(workspace: &LiteWorkspace, cx: &App) {
         tabs,
         active: workspace.active,
         next_snapshot_id: workspace.next_snapshot_id,
+        show_toolbar: workspace.show_toolbar,
     };
 
     let path = session_path();
@@ -361,6 +370,8 @@ impl LiteWorkspace {
         if state.next_snapshot_id > self.next_snapshot_id {
             self.next_snapshot_id = state.next_snapshot_id;
         }
+
+        self.show_toolbar = state.show_toolbar;
 
         if state.tabs.is_empty() {
             let new_id = self.mint_snapshot_id();
@@ -1027,6 +1038,7 @@ impl LiteWorkspace {
         cx: &mut Context<Self>,
     ) {
         self.show_toolbar = !self.show_toolbar;
+        self.save_session(cx);
         cx.notify();
     }
 
