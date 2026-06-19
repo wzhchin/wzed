@@ -7,12 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-06-19
+
 ### Added
 
 - Windows platform support with conditional GPUI backend
-- Codebase review document (REVIEW.md)
-- Project constitution v1.0.0
-- Spec-kit integration for spec-driven development
+- Arch Linux PKGBUILD (Wayland-only, builds from local source, no remote download)
+- Top toolbar visibility now persists across sessions
+
+### Changed
+
+- Shrink release binary ~47% (147 MiB → 78 MiB) via LTO, strip, and panic=abort
+- Drop the X11 backend entirely — the binary links only libxkbcommon, no libxcb
 
 ### Fixed
 

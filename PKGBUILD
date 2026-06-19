@@ -12,7 +12,7 @@
 #   makepkg -si
 
 pkgname=wzed
-pkgver=0.1.0
+pkgver=0.1.1
 pkgrel=1
 pkgdesc="Lightweight text editor based on Zed's GPUI editor (Wayland-only)"
 arch=('x86_64' 'aarch64')
