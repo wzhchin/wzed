@@ -69,3 +69,21 @@ util = { git = "https://github.com/zed-industries/zed", rev = "4ce18741ad2ea007c
 collections = { git = "https://github.com/zed-industries/zed", rev = "4ce18741ad2ea007cb20a1dd96d2a170d224cc01" }
 gpui_linux = { git = "https://github.com/zed-industries/zed", rev = "4ce18741ad2ea007cb20a1dd96d2a170d224cc01", default-features = false }
 gpui_windows = { git = "https://github.com/zed-industries/zed", rev = "4ce18741ad2ea007cb20a1dd96d2a170d224cc01" }
+
+# Release binary-size optimization. wzed pulls in Zed's editor/project crates
+# (statically linked), so the default release profile leaves ~140 MiB on disk.
+# These four knobs are the standard Rust size reduction with no behavior change:
+#   - lto = "fat": rustc-to-rustc LTO across the whole crate graph (NOT the
+#     GCC -flto that broke the bundled libgit2-sys under makepkg — this is pure
+#     LLVM, so the earlier link error does not recur).
+#   - codegen-units = 1: let LLVM see the whole binary at once for better dead-
+#     code elimination, at the cost of slower link time.
+#   - strip = true: drop debug symbols and symbol tables (shrinkwrap-only; the
+#     binary still works, panics still print file:line).
+#   - panic = "abort": skip the unwind tables. Verified safe — neither wzed nor
+#     gpui's non-test paths use catch_unwind.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"

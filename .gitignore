@@ -2,6 +2,8 @@
 **/*.proptest-regressions
 **/cargo-target
 **/target
+# makepkg output artifact — built locally, never committed
+*.pkg.tar.*
 .webrtc-sys/
 **/venv
 **/.direnv
